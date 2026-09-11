@@ -1,0 +1,439 @@
+/* Memanto for Obsidian
+   Everything here is built on Obsidian's own CSS variables so the plugin
+   inherits whatever theme the reader is running, light or dark. */
+
+/* ------------------------------------------------------------- side pane */
+
+.memanto-pane {
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-3);
+	padding: var(--size-4-3);
+	overflow-y: auto;
+}
+
+.memanto-controls {
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-2);
+}
+
+.memanto-row {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+}
+
+.memanto-agent {
+	flex: 1;
+	min-width: 0;
+}
+
+.memanto-query {
+	flex: 1;
+	min-width: 0;
+}
+
+.memanto-icon-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: var(--size-2-2);
+	background: transparent;
+	box-shadow: none;
+	color: var(--text-muted);
+	cursor: pointer;
+}
+
+.memanto-icon-button:hover {
+	color: var(--text-normal);
+}
+
+/* Mode toggle: recall and answer return different things, so they read as
+   two distinct modes rather than one search box with an option. */
+.memanto-modes {
+	gap: 0;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	overflow: hidden;
+}
+
+.memanto-mode {
+	flex: 1;
+	border: none;
+	border-radius: 0;
+	box-shadow: none;
+	background: transparent;
+	color: var(--text-muted);
+	cursor: pointer;
+	padding: var(--size-2-2) var(--size-4-2);
+}
+
+.memanto-mode.is-active {
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+.memanto-filters summary {
+	cursor: pointer;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.memanto-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-2-2);
+	padding-top: var(--size-2-3);
+}
+
+.memanto-chip {
+	padding: 2px 8px;
+	font-size: var(--font-ui-smaller);
+	border-radius: var(--radius-s);
+	border: 1px solid var(--background-modifier-border);
+	background: transparent;
+	box-shadow: none;
+	color: var(--text-muted);
+	cursor: pointer;
+}
+
+.memanto-chip.is-active {
+	background: var(--interactive-accent);
+	border-color: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+.memanto-pane-status {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.memanto-pane-status.is-hidden {
+	display: none;
+}
+
+/* ----------------------------------------------------------------- cards */
+
+.memanto-results {
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-2);
+}
+
+.memanto-card {
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-2-3);
+	padding: var(--size-4-2);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	background: var(--background-primary-alt);
+}
+
+.memanto-meta {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: var(--size-2-2);
+}
+
+.memanto-pill {
+	padding: 1px 6px;
+	font-size: var(--font-ui-smaller);
+	border-radius: var(--radius-s);
+	background: var(--background-modifier-hover);
+	color: var(--text-muted);
+	text-transform: lowercase;
+}
+
+.memanto-pill.is-expired {
+	background: var(--background-modifier-error);
+	color: var(--text-error);
+}
+
+.memanto-confidence {
+	flex: 0 0 44px;
+	height: 4px;
+	border-radius: 2px;
+	background: var(--background-modifier-border);
+	overflow: hidden;
+}
+
+.memanto-confidence-fill {
+	height: 100%;
+	background: var(--interactive-accent);
+}
+
+.memanto-confidence-fill.is-low {
+	background: var(--text-muted);
+}
+
+.memanto-confidence-value {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+	font-variant-numeric: tabular-nums;
+}
+
+.memanto-title {
+	margin: 0;
+	font-size: var(--font-ui-medium);
+	line-height: 1.3;
+}
+
+.memanto-body {
+	margin: 0;
+	font-size: var(--font-ui-small);
+	line-height: 1.5;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.memanto-footer {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+}
+
+.memanto-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-2-2);
+}
+
+.memanto-actions button {
+	font-size: var(--font-ui-smaller);
+	padding: 2px 8px;
+	box-shadow: none;
+	background: transparent;
+	border: 1px solid var(--background-modifier-border);
+	color: var(--text-muted);
+	cursor: pointer;
+}
+
+.memanto-actions button:hover {
+	color: var(--text-normal);
+	background: var(--background-modifier-hover);
+}
+
+.memanto-question {
+	margin: 0;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+}
+
+.memanto-answer-body {
+	font-size: var(--font-ui-small);
+	line-height: 1.6;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.memanto-sources summary {
+	cursor: pointer;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.memanto-sources .memanto-card {
+	margin-top: var(--size-2-3);
+	background: var(--background-primary);
+}
+
+.memanto-empty {
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-2-3);
+	align-items: flex-start;
+	padding: var(--size-4-4) var(--size-4-2);
+	color: var(--text-muted);
+}
+
+.memanto-empty h4 {
+	margin: 0;
+	color: var(--text-normal);
+}
+
+.memanto-empty p {
+	margin: 0;
+	font-size: var(--font-ui-small);
+}
+
+/* ------------------------------------------------------- setup & settings */
+
+.memanto-setup .memanto-status {
+	padding: var(--size-4-2);
+	border-radius: var(--radius-s);
+	background: var(--background-modifier-hover);
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	margin-bottom: var(--size-4-3);
+}
+
+.memanto-setup .memanto-status.is-ready {
+	color: var(--text-success);
+}
+
+.memanto-steps {
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-2);
+}
+
+.memanto-step {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	padding: var(--size-4-2);
+}
+
+.memanto-step.is-done {
+	opacity: 0.6;
+	padding-block: var(--size-2-3);
+}
+
+.memanto-step-header {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+}
+
+.memanto-step-number {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: 0 0 22px;
+	height: 22px;
+	border-radius: 50%;
+	background: var(--background-modifier-hover);
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	font-variant-numeric: tabular-nums;
+}
+
+.memanto-step.is-done .memanto-step-number {
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+.memanto-step-title {
+	font-weight: var(--font-medium);
+}
+
+.memanto-step-body {
+	padding-top: var(--size-2-3);
+	padding-left: calc(22px + var(--size-4-2));
+}
+
+.memanto-step-body p {
+	margin: 0 0 var(--size-2-3);
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+}
+
+.memanto-step-body summary {
+	cursor: pointer;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	margin-bottom: var(--size-2-3);
+}
+
+.memanto-hint {
+	font-size: var(--font-ui-smaller) !important;
+	color: var(--text-faint) !important;
+}
+
+.memanto-option {
+	border-left: 2px solid var(--background-modifier-border);
+	padding-left: var(--size-4-2);
+	margin-bottom: var(--size-4-2);
+}
+
+.memanto-option h4 {
+	margin: 0 0 2px;
+	font-size: var(--font-ui-small);
+}
+
+.memanto-option p {
+	margin: 0 0 var(--size-2-2);
+}
+
+/* Copyable command line — the only way this plugin ever "installs" anything. */
+.memanto-command {
+	display: flex;
+	align-items: stretch;
+	margin-bottom: var(--size-2-3);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	overflow: hidden;
+	background: var(--background-primary-alt);
+}
+
+.memanto-command code {
+	flex: 1;
+	padding: var(--size-2-2) var(--size-4-2);
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-smaller);
+	background: transparent;
+	overflow-x: auto;
+	white-space: pre;
+}
+
+.memanto-command button {
+	flex: none;
+	border: none;
+	border-left: 1px solid var(--background-modifier-border);
+	border-radius: 0;
+	box-shadow: none;
+	background: transparent;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	padding-inline: var(--size-4-2);
+	cursor: pointer;
+}
+
+.memanto-command button:hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.memanto-command button.is-copied {
+	color: var(--text-success);
+}
+
+.memanto-setup-footer {
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--size-4-2);
+	margin-top: var(--size-4-4);
+}
+
+.memanto-settings-status {
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-2-2);
+	padding: var(--size-4-2);
+	margin-bottom: var(--size-4-4);
+	border-radius: var(--radius-s);
+	background: var(--background-modifier-hover);
+}
+
+.memanto-settings-row {
+	display: flex;
+	gap: var(--size-4-2);
+	font-size: var(--font-ui-small);
+}
+
+.memanto-settings-label {
+	flex: 0 0 96px;
+	color: var(--text-muted);
+}
+
+.memanto-settings-value {
+	color: var(--text-normal);
+	overflow-wrap: anywhere;
+}
+
+.memanto-privacy p {
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+	margin: 0 0 var(--size-2-3);
+}
