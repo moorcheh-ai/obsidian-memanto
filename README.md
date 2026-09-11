@@ -1,19 +1,16 @@
 # Memanto for Obsidian
 
-Your coding agents write things down. This plugin puts what they wrote in your vault.
+Browse, search and ask questions about your agents' memory from inside Obsidian.
 
-[Memanto](https://github.com/moorcheh-ai/memanto) is a memory agent that manages what your
-other agents remember — across Claude Code, Cursor, Codex and the rest. It already stores
-decisions, preferences, facts and failures in one estate. This plugin gives that estate a
-human-readable surface: real Markdown notes you can link and query, plus a side pane for
-searching and questioning it live.
+[Memanto](https://github.com/moorcheh-ai/memanto) stores what your coding agents learn
+(decisions, preferences, facts and mistakes) from tools like Claude Code, Cursor and Codex.
+This plugin brings those memories into your vault as Markdown notes and adds a chat sidebar
+for searching them.
 
-It is not another "chat with your notes" plugin. It works in the other direction.
+## Features
 
-## What it does
-
-**Syncs memories into the vault as notes.** One note per memory, with the frontmatter
-Memanto already emits — so Dataview works on day one:
+**Sync memories into the vault.** Each memory becomes a note with frontmatter for its type,
+confidence and provenance, so you can query them with Dataview:
 
 ````
 ```dataview
@@ -24,101 +21,95 @@ SORT file.name
 ```
 ````
 
-Notes you edit by hand are never overwritten. A sync that would clobber your changes skips
-that file and tells you which ones it left alone.
+If you edit a synced note, later syncs leave it alone and list the files they skipped.
 
-**Chat with the estate from the sidebar.** Pick an agent, then switch between **Recall**
-for a ranked list of what is stored, and **Answer** for a grounded reply. Every reply is
-labelled with the mode that produced it; recalled memories carry their type, confidence,
-provenance and date, and anything can be inserted straight into the note you are writing.
+**Chat in the sidebar.** Pick an agent, then choose a mode:
 
-Recall also does time: most recent, as of a date, or changed since a date.
+- **Recall** lists matching memories with their type, confidence, provenance and date.
+  You can also view the most recent memories, memories as of a date, or what changed
+  since a date.
+- **Answer** gives a written reply based on the stored memories.
+
+Any result can be copied or inserted into the note you're editing.
 
 ## Requirements
 
-- **Obsidian 1.7.2** or newer, **desktop only.** Memanto runs as a local server on
-  `127.0.0.1`, which mobile cannot reach. Notes synced into the vault are plain Markdown
-  and read fine on mobile — the chat is what needs the desktop.
-- **[Memanto](https://github.com/moorcheh-ai/memanto)** installed and configured. It is a
-  Python command-line tool and needs Python 3.11 or newer.
+- **Obsidian 1.7.2** or newer, on **desktop**. The chat needs a Memanto server running on
+  `127.0.0.1`, which mobile can't reach. Synced notes are plain Markdown and open fine on
+  mobile.
+- **[Memanto](https://github.com/moorcheh-ai/memanto)**, which needs Python 3.11 or newer.
 
 ## Setup
 
-**This plugin does not install anything for you.** It detects what you already have and
-shows you the commands for whatever is missing, with a copy button on each. Open them any
-time from the command palette: **Memanto: Setup steps**.
+The plugin doesn't install anything. It checks what's already on your machine and shows
+the commands for anything missing, each with a copy button. Open them any time with
+**Memanto: Setup steps** in the command palette.
 
-If you already use Memanto, there is nothing to configure. The plugin reads the API key
-from `~/.memanto/.env`, where the CLI stored it, and your active agent from
-`~/.memanto/config.yaml`. Most existing users never see the setup screen.
+If Memanto is already set up, there's nothing to configure. The plugin reads your API key
+from `~/.memanto/.env` and your active agent from `~/.memanto/config.yaml`.
 
-Starting from nothing, it is two commands — the plugin runs the server itself:
+To start from scratch, run two commands. The plugin starts the server for you.
 
 ```bash
 pip install memanto          # or: uv tool install memanto / pipx install memanto
-memanto                      # asks which backend, stores your key
+memanto                      # choose a backend and enter your key
 ```
 
-For the cloud backend you need a free key from
-[console.moorcheh.ai/api-keys](https://console.moorcheh.ai/api-keys) — 100,000 operations,
-no card. Or choose **on-prem** during `memanto` setup and skip the key entirely: that runs
-everything locally through Docker, and nothing leaves your machine.
+The cloud backend needs a free key from
+[console.moorcheh.ai/api-keys](https://console.moorcheh.ai/api-keys) (100,000 operations,
+no card required). The on-prem backend needs no key and runs locally through Docker.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| **Memanto: Open chat** | Recall and answer in the sidebar. Also on the ribbon. |
-| **Memanto: Sync memories to vault** | Export the estate and write it into your sync folder. |
-| **Memanto: Start server** | Retry starting the private server after a failure. |
-| **Memanto: Setup steps** | The install walkthrough, with copyable commands. |
+| **Memanto: Open chat** | Opens the chat sidebar. Also available from the ribbon. |
+| **Memanto: Sync memories to vault** | Exports memories and writes them into your sync folder. |
+| **Memanto: Start server** | Tries to start the server again after a failure. |
+| **Memanto: Setup steps** | Shows the install steps with copyable commands. |
 
 ## Network use and privacy
 
-The plugin itself talks to exactly one address: a Memanto server on your own machine,
-bound to `127.0.0.1`. It contacts no other host.
+The plugin only connects to a Memanto server on your own machine at `127.0.0.1`.
 
-That local server is what reaches the network, and only if you configured the **cloud**
-backend — in which case your memories are stored by [Moorcheh](https://www.moorcheh.ai).
-Configure Memanto with the **on-prem** backend instead and nothing leaves your machine.
-Run `memanto config show` to see which is active.
+That server connects to [Moorcheh](https://www.moorcheh.ai) only if you chose the cloud
+backend, in which case your memories are stored there. With the on-prem backend, nothing
+leaves your machine. Run `memanto config show` to check which backend you're using.
 
-Your API key is read from `~/.memanto/.env`, where the Memanto CLI puts it. **The plugin
-never writes it into the vault**, because vault files sync to your other devices and to
-any git remote you have configured.
+Your API key is read from `~/.memanto/.env`. The plugin never saves it in the vault, because
+vault files can sync to other devices and git remotes.
 
-The plugin sends nothing from your vault to Memanto. It only reads.
+The plugin doesn't send your notes to Memanto. Only what you type into the chat is sent.
 
 ## The server
 
-When Obsidian opens, the plugin starts its own **private** `memanto serve` on a free
-loopback port, using the `memanto` executable on your PATH, and stops it when Obsidian
-closes. If you also run `memanto serve` yourself — on 8000 or anywhere else — the plugin
-never uses, starts or stops it. Each open vault gets its own private server.
+When Obsidian opens, the plugin starts its own `memanto serve` on a free port, using the
+`memanto` executable on your PATH. It stops that server when Obsidian closes. If you run
+`memanto serve` yourself on any port, the plugin doesn't use or stop it. Each open vault gets
+its own server.
 
-If Obsidian crashes before it can stop the server, the next launch reconnects to that
-same process instead of starting another, and stops it at the end of that session.
+If Obsidian crashes before stopping the server, the next launch reuses that server and stops
+it when you close Obsidian.
 
-Prefer to run the server yourself? Set **Server** to *Connect to my own server* in
-settings, and the plugin follows the address in `~/.memanto/config.yaml`.
+To use a server you run yourself, set **Server** to *Connect to my own server* in settings.
+The plugin then uses the address in `~/.memanto/config.yaml`.
 
 ### Sessions
 
-Memanto keeps one session per agent, and starting a new one signs out every other client
-using that agent — the CLI, and any coding agent sharing it. So the plugin **joins the
-agent's existing session** when there is a live one, and only starts a session when the
-agent has none. Your terminal and your coding agents stay signed in while you chat.
+Memanto allows one session per agent. Starting a new session signs out every other client
+using that agent, including the CLI and your coding agents. To avoid this, the plugin reuses
+the agent's current session and only starts a new one when the agent doesn't have one.
 
 ## Building from source
 
 ```bash
 npm install
 npm run build      # typechecks, then bundles to main.js
-npm run dev        # watch mode
+npm run dev        # rebuilds on every change
 ```
 
 Copy `main.js`, `manifest.json` and `styles.css` into
-`<vault>/.obsidian/plugins/memanto/` and enable it in Community plugins.
+`<vault>/.obsidian/plugins/memanto/`, then enable the plugin under Community plugins.
 
 ## Licence
 
