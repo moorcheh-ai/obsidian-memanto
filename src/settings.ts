@@ -26,7 +26,7 @@ export const DEFAULT_SETTINGS: MemantoSettings = {
 	syncFolder: "Memanto",
 	agentId: "",
 	baseUrlOverride: "",
-	serverMode: "attach",
+	serverMode: "dedicated",
 	recallLimit: 10,
 	limitPerType: 200,
 	split: "auto",
@@ -101,10 +101,10 @@ export class MemantoSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		new Setting(containerEl).setName("Side pane").setHeading();
+		new Setting(containerEl).setName("Chat").setHeading();
 
 		new Setting(containerEl)
-			.setName("Results per search")
+			.setName("Memories per recall")
 			.addSlider((slider) =>
 				slider
 					.setLimits(5, 50, 5)
@@ -131,13 +131,13 @@ export class MemantoSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Server")
 			.setDesc(
-				"Memanto runs as a local server. This plugin can leave it to you, or start and stop one alongside Obsidian. It never starts a server you are already running, and never stops one it did not start.",
+				"By default Obsidian runs its own private Memanto server on a free port, starting it when Obsidian opens and stopping it when Obsidian closes. A server you run yourself is never used, started or stopped.",
 			)
 			.addDropdown((dropdown) =>
 				dropdown
 					.addOptions({
-						attach: "Connect only",
-						manage: "Start and stop with Obsidian",
+						dedicated: "Private server for Obsidian",
+						attach: "Connect to my own server",
 					})
 					.setValue(this.plugin.settings.serverMode)
 					.onChange(async (value) => {
@@ -147,6 +147,11 @@ export class MemantoSettingTab extends PluginSettingTab {
 						this.display();
 					}),
 			);
+
+		if (this.plugin.settings.serverMode !== "attach") {
+			this.renderPrivacy(containerEl);
+			return;
+		}
 
 		new Setting(containerEl)
 			.setName("Server address")
@@ -171,7 +176,7 @@ export class MemantoSettingTab extends PluginSettingTab {
 		const box = container.createDiv({ cls: "memanto-settings-status" });
 
 		const rows: Array<[string, string]> = [
-			["Server", environment?.serverUp ? `Connected — ${environment.baseUrl}` : "Not running"],
+			["Server", this.describeServer()],
 			["Memanto CLI", environment?.binaryPath ?? "Not found on PATH"],
 			[
 				"API key",
@@ -204,6 +209,17 @@ export class MemantoSettingTab extends PluginSettingTab {
 						this.display();
 					}),
 			);
+	}
+
+	private describeServer(): string {
+		const environment = this.plugin.environment;
+		if (!environment?.serverUp) {
+			return this.plugin.lastServerError ?? "Not running";
+		}
+		const pid = this.plugin.serverPid;
+		return pid !== null
+			? `Private server at ${environment.baseUrl} (pid ${pid})`
+			: `Your server at ${environment.baseUrl}`;
 	}
 
 	private renderPrivacy(container: HTMLElement): void {

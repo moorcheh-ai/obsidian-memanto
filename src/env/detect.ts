@@ -81,6 +81,44 @@ export function readApiKey(): string | null {
 	return null;
 }
 
+/** Agent ids the server accepts; anything else must never reach a file path. */
+const SAFE_AGENT_ID = /^[A-Za-z0-9._-]+$/;
+
+/** Leave a margin so we never hand the server a token that expires mid-request. */
+const SESSION_EXPIRY_MARGIN_MS = 60_000;
+
+/**
+ * The live session token an agent already has, if any.
+ *
+ * Memanto keeps exactly one session per agent, in `~/.memanto/sessions/{agent}.json`,
+ * and rejects any token whose session id no longer matches that file. Creating a
+ * session from Obsidian would therefore sign out the CLI and every coding agent
+ * using the same agent. Joining the existing session instead leaves them alone.
+ */
+export function readSessionToken(agentId: string): string | null {
+	if (!SAFE_AGENT_ID.test(agentId)) return null;
+
+	const path = join(memantoHome(), "sessions", `${agentId}.json`);
+	if (!existsSync(path)) return null;
+
+	try {
+		const session = JSON.parse(readFileSync(path, "utf8")) as {
+			session_token?: unknown;
+			status?: unknown;
+			expires_at?: unknown;
+		};
+		if (typeof session.session_token !== "string" || !session.session_token) return null;
+		if (session.status !== "active") return null;
+		if (typeof session.expires_at === "string") {
+			const expires = Date.parse(session.expires_at);
+			if (Number.isFinite(expires) && expires - SESSION_EXPIRY_MARGIN_MS < Date.now()) return null;
+		}
+		return session.session_token;
+	} catch {
+		return null;
+	}
+}
+
 interface MemantoConfig {
 	port: number | null;
 	url: string | null;
@@ -122,17 +160,46 @@ function readConfig(): MemantoConfig {
  *
  * An explicit override in settings wins; otherwise follow the CLI's own config
  * so the plugin and the terminal always agree on the port.
+ *
+ * The CLI stores host and port as separate keys (`server.url: 127.0.0.1`,
+ * `server.port: 8000`), so the port must be merged back in — using `url` alone
+ * yields `http://127.0.0.1`, which is port 80.
  */
 export function resolveBaseUrl(override: string): string {
 	const trimmed = override.trim();
-	if (trimmed) return trimmed.replace(/\/+$/, "");
+	if (trimmed) return normalizeBaseUrl(trimmed, null);
 
 	const config = readConfig();
-	if (config.url) {
-		const url = config.url.replace(/\/+$/, "");
-		return /^https?:\/\//.test(url) ? url : `http://${url}`;
+	return normalizeBaseUrl(config.url ?? "127.0.0.1", config.port);
+}
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "0.0.0.0", "[::1]", "::1"]);
+
+/**
+ * Turn whatever the config or the user supplied into `scheme://host:port`.
+ *
+ * - A bare host gets `http://`.
+ * - A loopback host with no port gets `port`, or Memanto's default — nothing
+ *   serves Memanto on port 80 by default. A remote host keeps its scheme's
+ *   default port, since it may sit behind a proxy.
+ * - `0.0.0.0` is a bind address, not a destination; connect to `127.0.0.1`.
+ */
+export function normalizeBaseUrl(raw: string, port: number | null): string {
+	let value = raw.trim().replace(/\/+$/, "");
+	if (!/^https?:\/\//i.test(value)) value = `http://${value}`;
+
+	let url: URL;
+	try {
+		url = new URL(value);
+	} catch {
+		return `http://127.0.0.1:${port ?? DEFAULT_PORT}`;
 	}
-	return `http://127.0.0.1:${config.port ?? DEFAULT_PORT}`;
+
+	const loopback = LOOPBACK_HOSTS.has(url.hostname);
+	if (url.hostname === "0.0.0.0") url.hostname = "127.0.0.1";
+	if (!url.port && loopback) url.port = String(port ?? DEFAULT_PORT);
+
+	return `${url.protocol}//${url.host}`;
 }
 
 /**

@@ -248,10 +248,20 @@ function safeName(value: string): string {
 
 function runCli(binaryPath: string, args: string[]): Promise<string> {
 	return new Promise((resolve, reject) => {
+		// Node refuses to run .cmd/.bat without a shell (CVE-2024-27980).
+		const needsShell = /\.(cmd|bat)$/i.test(binaryPath);
 		execFile(
-			binaryPath,
+			needsShell ? `"${binaryPath}"` : binaryPath,
 			args,
-			{ timeout: 180_000, windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
+			{
+				timeout: 180_000,
+				windowsHide: true,
+				maxBuffer: 8 * 1024 * 1024,
+				shell: needsShell,
+				// Without a console, Python on Windows falls back to the ANSI code
+				// page and crashes printing the CLI's unicode output.
+				env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1", NO_COLOR: "1" },
+			},
 			(error, stdout, stderr) => {
 				if (error) reject(new Error(stderr?.toString().trim() || error.message));
 				else resolve(stdout?.toString() ?? "");

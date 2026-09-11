@@ -1,5 +1,6 @@
 import {
 	ItemView,
+	MarkdownRenderer,
 	MarkdownView,
 	Notice,
 	setIcon,
@@ -8,18 +9,28 @@ import {
 import { MemantoApiError, MemantoOfflineError } from "../api/client";
 import { MEMORY_TYPES, memoryText, type AgentInfo, type MemoryItem } from "../types";
 import type MemantoPlugin from "../main";
+import { createMascot, setMascotState, type MascotState } from "./mascot";
 
 export const MEMANTO_VIEW_TYPE = "memanto-view";
 
 type Mode = "recall" | "answer";
 type Temporal = "search" | "recent" | "as-of" | "changed-since";
 
+interface Suggestion {
+	label: string;
+	run: () => void;
+}
+
 /**
- * The side pane: one place to search the estate and to ask it questions.
+ * The side pane, as a conversation.
  *
- * Recall and answer are separate modes rather than one box, because they return
- * genuinely different things — a ranked list of what is stored, versus a single
- * grounded reply. Blurring them hides which one produced the text on screen.
+ * Recall and Answer stay distinct modes, and every reply is labelled with the
+ * mode that produced it: a ranked list of stored memories and a synthesised
+ * answer are different kinds of evidence, and a chat transcript that mixed them
+ * unlabelled would hide which one the reader is looking at.
+ *
+ * The transcript lives in the DOM and survives mode switches, agent switches
+ * and the server going away; only "Clear" empties it.
  */
 export class MemantoView extends ItemView {
 	private mode: Mode = "recall";
@@ -27,13 +38,19 @@ export class MemantoView extends ItemView {
 	private selectedTypes = new Set<string>();
 	private agents: AgentInfo[] = [];
 	private busy = false;
+	private messageCount = 0;
+	private loadedAgentsFor: string | null = null;
 
-	private queryInput!: HTMLInputElement;
-	private temporalInput!: HTMLInputElement;
+	private headerMascot!: HTMLElement;
+	private statusPill!: HTMLElement;
 	private agentSelect!: HTMLSelectElement;
-	private resultsEl!: HTMLElement;
-	private statusEl!: HTMLElement;
-	private filtersEl!: HTMLElement;
+	private threadEl!: HTMLElement;
+	private panelEl: HTMLElement | null = null;
+	private toggleEl!: HTMLElement;
+	private optionsEl!: HTMLElement;
+	private inputEl!: HTMLTextAreaElement;
+	private sendButton!: HTMLButtonElement;
+	private dateInput: HTMLInputElement | null = null;
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -51,203 +68,535 @@ export class MemantoView extends ItemView {
 	}
 
 	getIcon(): string {
-		return "brain-circuit";
+		return "memanto";
 	}
 
 	async onOpen(): Promise<void> {
-		this.render();
-		await this.loadAgents();
+		this.build();
+		this.onServerStatusChanged();
 	}
 
 	async onClose(): Promise<void> {
 		this.contentEl.empty();
 	}
 
-	// ---------------------------------------------------------------- layout
+	// ================================================================ layout
 
-	private render(): void {
+	private build(): void {
 		const root = this.contentEl;
 		root.empty();
 		root.addClass("memanto-pane");
 
-		this.renderControls(root.createDiv({ cls: "memanto-controls" }));
-		this.statusEl = root.createDiv({ cls: "memanto-pane-status" });
-		this.resultsEl = root.createDiv({ cls: "memanto-results" });
-
-		this.showIdleState();
+		this.buildHeader(root.createDiv({ cls: "memanto-header" }));
+		this.threadEl = root.createDiv({ cls: "memanto-thread" });
+		this.buildComposer(root.createDiv({ cls: "memanto-composer" }));
 	}
 
-	private renderControls(container: HTMLElement): void {
-		const agentRow = container.createDiv({ cls: "memanto-row" });
+	private buildHeader(header: HTMLElement): void {
+		const top = header.createDiv({ cls: "memanto-header-top" });
+
+		const brand = top.createDiv({ cls: "memanto-brand" });
+		this.headerMascot = createMascot(brand, "idle", "is-small");
+		brand.createSpan({ cls: "memanto-wordmark", text: "Memanto" });
+		this.statusPill = brand.createDiv({ cls: "memanto-status-pill" });
+
+		const actions = top.createDiv({ cls: "memanto-header-actions" });
+		this.iconButton(actions, "folder-sync", "Sync memories to vault", () =>
+			void this.plugin.syncToVault(),
+		);
+		this.iconButton(actions, "eraser", "Clear conversation", () => this.clearThread());
+		this.iconButton(actions, "settings", "Memanto settings", () => this.plugin.openSettings());
+
+		const agentRow = header.createDiv({ cls: "memanto-agent-row" });
+		const agentIcon = agentRow.createSpan({ cls: "memanto-agent-icon" });
+		setIcon(agentIcon, "bot");
 		this.agentSelect = agentRow.createEl("select", { cls: "dropdown memanto-agent" });
+		this.agentSelect.id = "memanto-agent-select";
 		this.agentSelect.addEventListener("change", () => {
 			this.plugin.settings.agentId = this.agentSelect.value;
 			void this.plugin.saveSettings();
-			this.clearResults();
+			if (this.messageCount > 0) this.addDivider(`Now asking ${this.agentSelect.value}`);
 		});
-
-		const refresh = agentRow.createEl("button", { cls: "memanto-icon-button" });
-		refresh.setAttr("aria-label", "Reload agents");
-		setIcon(refresh, "refresh-cw");
-		refresh.addEventListener("click", () => void this.loadAgents());
-
-		const modeRow = container.createDiv({ cls: "memanto-row memanto-modes" });
-		for (const mode of ["recall", "answer"] as Mode[]) {
-			const button = modeRow.createEl("button", {
-				text: mode === "recall" ? "Recall" : "Answer",
-				cls: this.mode === mode ? "memanto-mode is-active" : "memanto-mode",
-			});
-			button.addEventListener("click", () => {
-				this.mode = mode;
-				this.render();
-			});
-		}
-
-		const queryRow = container.createDiv({ cls: "memanto-row" });
-		this.queryInput = queryRow.createEl("input", {
-			type: "text",
-			cls: "memanto-query",
-			placeholder:
-				this.mode === "answer" ? "Ask a question…" : "Search the estate…",
-		});
-		this.queryInput.id = "memanto-query-input";
-		this.queryInput.addEventListener("keydown", (event) => {
-			if (event.key === "Enter") void this.submit();
-		});
-
-		const go = queryRow.createEl("button", { text: "Go", cls: "mod-cta" });
-		go.addEventListener("click", () => void this.submit());
-
-		if (this.mode === "recall") this.renderRecallFilters(container);
 	}
 
-	private renderRecallFilters(container: HTMLElement): void {
-		const temporalRow = container.createDiv({ cls: "memanto-row" });
-		const select = temporalRow.createEl("select", { cls: "dropdown" });
-		const options: Array<[Temporal, string]> = [
+	private buildComposer(composer: HTMLElement): void {
+		this.toggleEl = composer.createDiv({ cls: "memanto-toggle" });
+		this.toggleEl.setAttr("role", "tablist");
+		this.toggleEl.createDiv({ cls: "memanto-toggle-thumb" });
+
+		const modes: Array<[Mode, string, string, string]> = [
+			["recall", "Recall", "search", "Find stored memories"],
+			["answer", "Answer", "sparkles", "Get a grounded answer"],
+		];
+		for (const [mode, label, icon, hint] of modes) {
+			const button = this.toggleEl.createEl("button", { cls: "memanto-toggle-option" });
+			button.setAttr("role", "tab");
+			button.setAttr("data-mode", mode);
+			button.setAttr("aria-label", hint);
+			setIcon(button.createSpan({ cls: "memanto-toggle-icon" }), icon);
+			button.createSpan({ text: label });
+			button.addEventListener("click", () => this.setMode(mode));
+		}
+
+		this.optionsEl = composer.createDiv({ cls: "memanto-options" });
+
+		const box = composer.createDiv({ cls: "memanto-input-box" });
+		this.inputEl = box.createEl("textarea", { cls: "memanto-input" });
+		this.inputEl.id = "memanto-chat-input";
+		this.inputEl.rows = 1;
+		this.inputEl.addEventListener("input", () => this.autoGrow());
+		this.inputEl.addEventListener("keydown", (event) => {
+			if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+				event.preventDefault();
+				void this.submit();
+			}
+		});
+
+		this.sendButton = box.createEl("button", { cls: "memanto-send" });
+		this.sendButton.setAttr("aria-label", "Send");
+		setIcon(this.sendButton, "arrow-up");
+		this.sendButton.addEventListener("click", () => void this.submit());
+
+		composer.createDiv({
+			cls: "memanto-composer-hint",
+			text: "Enter to send · Shift+Enter for a new line",
+		});
+
+		this.setMode(this.mode);
+	}
+
+	private iconButton(
+		parent: HTMLElement,
+		icon: string,
+		label: string,
+		onClick: () => void,
+	): HTMLButtonElement {
+		const button = parent.createEl("button", { cls: "memanto-icon-button clickable-icon" });
+		button.setAttr("aria-label", label);
+		setIcon(button, icon);
+		button.addEventListener("click", onClick);
+		return button;
+	}
+
+	// ============================================================ mode & options
+
+	private setMode(mode: Mode): void {
+		this.mode = mode;
+		this.toggleEl.setAttr("data-active", mode);
+		this.toggleEl.querySelectorAll<HTMLElement>(".memanto-toggle-option").forEach((option) => {
+			const active = option.getAttr("data-mode") === mode;
+			option.toggleClass("is-active", active);
+			option.setAttr("aria-selected", String(active));
+		});
+		this.renderOptions();
+		this.updatePlaceholder();
+		if (this.messageCount === 0 && this.plugin.serverStatus === "online") this.showWelcome();
+	}
+
+	private renderOptions(): void {
+		this.optionsEl.empty();
+		this.dateInput = null;
+		this.optionsEl.toggleClass("is-hidden", this.mode !== "recall");
+		if (this.mode !== "recall") return;
+
+		const temporal = this.optionsEl.createEl("select", { cls: "dropdown memanto-temporal" });
+		temporal.id = "memanto-temporal-select";
+		const choices: Array<[Temporal, string]> = [
 			["search", "Search"],
 			["recent", "Most recent"],
-			["as-of", "As of a date"],
+			["as-of", "As of date"],
 			["changed-since", "Changed since"],
 		];
-		for (const [value, label] of options) {
-			const option = select.createEl("option", { text: label, value });
-			if (value === this.temporal) option.selected = true;
+		for (const [value, label] of choices) {
+			const option = temporal.createEl("option", { text: label, value });
+			option.selected = value === this.temporal;
 		}
-		select.addEventListener("change", () => {
-			this.temporal = select.value as Temporal;
-			this.render();
+		temporal.addEventListener("change", () => {
+			this.temporal = temporal.value as Temporal;
+			this.renderOptions();
+			this.updatePlaceholder();
 		});
 
 		if (this.temporal === "as-of" || this.temporal === "changed-since") {
-			this.temporalInput = temporalRow.createEl("input", {
-				type: "date",
-				cls: "memanto-date",
-			});
-			this.temporalInput.id = "memanto-temporal-date";
-			this.temporalInput.value = new Date().toISOString().slice(0, 10);
+			this.dateInput = this.optionsEl.createEl("input", { type: "date", cls: "memanto-date" });
+			this.dateInput.id = "memanto-temporal-date";
+			this.dateInput.value = isoDate(this.temporal === "changed-since" ? daysAgo(7) : new Date());
 		}
 
-		const details = container.createEl("details", { cls: "memanto-filters" });
-		details.createEl("summary", {
-			text: this.selectedTypes.size
-				? `Types (${this.selectedTypes.size} selected)`
-				: "Types (all)",
+		const types = this.optionsEl.createEl("button", { cls: "memanto-types-button" });
+		types.id = "memanto-types-button";
+		setIcon(types.createSpan(), "filter");
+		types.createSpan({
+			text: this.selectedTypes.size ? `${this.selectedTypes.size} types` : "All types",
 		});
-		this.filtersEl = details.createDiv({ cls: "memanto-chips" });
+		if (this.selectedTypes.size) types.addClass("is-active");
+
+		const tray = this.optionsEl.createDiv({ cls: "memanto-type-tray is-hidden" });
+		types.addEventListener("click", () => tray.toggleClass("is-hidden", !tray.hasClass("is-hidden")));
 
 		for (const type of MEMORY_TYPES) {
-			const chip = this.filtersEl.createEl("button", { text: type, cls: "memanto-chip" });
-			if (this.selectedTypes.has(type)) chip.addClass("is-active");
+			const chip = tray.createEl("button", { cls: "memanto-chip", text: type });
+			chip.toggleClass("is-active", this.selectedTypes.has(type));
 			chip.addEventListener("click", () => {
 				if (this.selectedTypes.has(type)) this.selectedTypes.delete(type);
 				else this.selectedTypes.add(type);
-				this.render();
-				details.open = true;
+				chip.toggleClass("is-active", this.selectedTypes.has(type));
+				types.lastElementChild?.setText(
+					this.selectedTypes.size ? `${this.selectedTypes.size} types` : "All types",
+				);
+				types.toggleClass("is-active", this.selectedTypes.size > 0);
 			});
 		}
 	}
 
-	// ------------------------------------------------------------------ data
+	private updatePlaceholder(): void {
+		if (!this.inputEl) return;
+		if (this.mode === "answer") {
+			this.inputEl.placeholder = "Ask Memanto anything your agents learned…";
+		} else if (this.temporal === "search") {
+			this.inputEl.placeholder = "Search memories…";
+		} else {
+			this.inputEl.placeholder = "Optional note — press Enter to load";
+		}
+	}
 
-	/** Populate the agent picker. Falls back to whatever the CLI last activated. */
-	async loadAgents(): Promise<void> {
-		const environment = this.plugin.environment;
-		if (!environment?.serverUp) {
-			this.showOfflineState();
+	private autoGrow(): void {
+		this.inputEl.style.height = "auto";
+		this.inputEl.style.height = `${Math.min(this.inputEl.scrollHeight, 160)}px`;
+	}
+
+	// ============================================================ server status
+
+	/** Called by the plugin whenever detection or the server state changes. */
+	onServerStatusChanged(): void {
+		if (!this.statusPill) return;
+		const status = this.plugin.serverStatus;
+
+		const labels: Record<typeof status, string> = {
+			checking: "Checking",
+			starting: "Starting",
+			online: "Online",
+			offline: "Offline",
+		};
+		this.statusPill.empty();
+		this.statusPill.className = `memanto-status-pill is-${status}`;
+		this.statusPill.createSpan({ cls: "memanto-status-dot" });
+		this.statusPill.createSpan({ text: labels[status] });
+		this.statusPill.setAttr("aria-label", this.plugin.environment?.baseUrl ?? "");
+
+		const mascotState: MascotState =
+			status === "online" ? "idle" : status === "offline" ? "sleeping" : "walking";
+		setMascotState(this.headerMascot, mascotState);
+
+		const online = status === "online";
+		this.inputEl.disabled = !online;
+		this.sendButton.disabled = !online;
+		this.agentSelect.disabled = !online;
+
+		if (online) {
+			const baseUrl = this.plugin.environment?.baseUrl ?? null;
+			if (this.loadedAgentsFor !== baseUrl) void this.loadAgents();
+			if (this.messageCount === 0) this.showWelcome();
+			else this.removePanel();
 			return;
 		}
 
+		this.loadedAgentsFor = null;
+		if (this.messageCount === 0) this.showStatusPanel(status);
+	}
+
+	private async loadAgents(): Promise<void> {
+		const environment = this.plugin.environment;
 		try {
 			const list = await this.plugin.client.listAgents();
 			this.agents = list.agents ?? [];
+			this.loadedAgentsFor = environment?.baseUrl ?? null;
 		} catch (error) {
-			this.showError(error);
+			if (error instanceof MemantoOfflineError) {
+				void this.plugin.refreshEnvironment();
+				return;
+			}
+			this.agentSelect.empty();
+			this.agentSelect.createEl("option", { text: "Could not load agents", value: "" });
+			new Notice(`Memanto: ${describe(error)}`);
 			return;
 		}
 
 		this.agentSelect.empty();
 		if (this.agents.length === 0) {
 			this.agentSelect.createEl("option", { text: "No agents yet", value: "" });
-			this.setStatus("This account has no agents. Create one with `memanto agent create`.");
 			return;
 		}
 
 		const preferred =
-			this.plugin.settings.agentId || environment.activeAgentId || this.agents[0].agent_id;
+			this.plugin.settings.agentId || environment?.activeAgentId || this.agents[0].agent_id;
+		const exists = this.agents.some((agent) => agent.agent_id === preferred);
 
 		for (const agent of this.agents) {
 			const count = agent.memory_count;
 			const label =
 				typeof count === "number"
-					? `${agent.agent_id} (${count.toLocaleString()})`
+					? `${agent.agent_id} · ${count.toLocaleString()} memories`
 					: agent.agent_id;
 			const option = this.agentSelect.createEl("option", { text: label, value: agent.agent_id });
-			if (agent.agent_id === preferred) option.selected = true;
+			option.selected = agent.agent_id === (exists ? preferred : this.agents[0].agent_id);
 		}
 
-		this.plugin.settings.agentId = this.agentSelect.value;
-		await this.plugin.saveSettings();
-		this.showIdleState();
+		if (this.plugin.settings.agentId !== this.agentSelect.value) {
+			this.plugin.settings.agentId = this.agentSelect.value;
+			await this.plugin.saveSettings();
+		}
+	}
+
+	// ================================================================= panels
+
+	private removePanel(): void {
+		this.panelEl?.remove();
+		this.panelEl = null;
+	}
+
+	private newPanel(): HTMLElement {
+		this.removePanel();
+		this.panelEl = this.threadEl.createDiv({ cls: "memanto-panel" });
+		return this.panelEl;
+	}
+
+	private showWelcome(): void {
+		const panel = this.newPanel();
+		createMascot(panel, "idle", "is-hero");
+		panel.createEl("h3", {
+			cls: "memanto-panel-title",
+			text: this.mode === "answer" ? "Ask your agents' memory" : "Search your agents' memory",
+		});
+		panel.createEl("p", {
+			cls: "memanto-panel-text",
+			text:
+				this.mode === "answer"
+					? "Answers are grounded in what your agents actually stored — decisions, preferences, facts and lessons."
+					: "Everything your agents remembered, ranked by relevance, with confidence and provenance on every result.",
+		});
+
+		const suggestions: Suggestion[] =
+			this.mode === "answer"
+				? [
+						{ label: "What have we decided recently?", run: () => this.ask("What have we decided recently?") },
+						{ label: "What are my preferences?", run: () => this.ask("What are my preferences?") },
+						{ label: "What mistakes should I avoid?", run: () => this.ask("What mistakes or errors should I avoid repeating?") },
+					]
+				: [
+						{ label: "Show recent memories", run: () => this.runTemporal("recent") },
+						{ label: "What changed this week?", run: () => this.runTemporal("changed-since") },
+						{ label: "Find decisions", run: () => this.ask("decisions", ["decision"]) },
+					];
+
+		const list = panel.createDiv({ cls: "memanto-suggestions" });
+		for (const suggestion of suggestions) {
+			const button = list.createEl("button", { cls: "memanto-suggestion", text: suggestion.label });
+			button.addEventListener("click", suggestion.run);
+		}
+	}
+
+	private showStatusPanel(status: "checking" | "starting" | "offline"): void {
+		const panel = this.newPanel();
+		const environment = this.plugin.environment;
+
+		if (status !== "offline") {
+			createMascot(panel, "walking", "is-hero");
+			panel.createEl("h3", {
+				cls: "memanto-panel-title",
+				text: status === "starting" ? "Waking Memanto up" : "Looking for Memanto",
+			});
+			panel.createEl("p", {
+				cls: "memanto-panel-text",
+				text:
+					status === "starting"
+						? "Starting a private server for Obsidian. The first start can take a few seconds."
+						: "Checking for the Memanto CLI…",
+			});
+			return;
+		}
+
+		createMascot(panel, "sleeping", "is-hero");
+		const installed = Boolean(environment?.binaryPath);
+		panel.createEl("h3", {
+			cls: "memanto-panel-title",
+			text: installed ? "Memanto is asleep" : "Memanto isn't installed yet",
+		});
+		panel.createEl("p", {
+			cls: "memanto-panel-text",
+			text: installed
+				? this.plugin.settings.serverMode === "attach"
+					? `Nothing is answering at ${environment?.baseUrl || "your server's address"}. Start it, or switch to a private server in settings. Your synced notes still work.`
+					: "The private server isn't running. Your synced notes still work."
+				: "Install the Memanto CLI to chat with your agents' memory. It takes about a minute.",
+		});
+
+		const lastError = this.plugin.lastServerError;
+		if (installed && lastError) {
+			panel.createEl("p", { cls: "memanto-panel-error", text: lastError });
+		}
+
+		const buttons = panel.createDiv({ cls: "memanto-panel-buttons" });
+		if (installed && this.plugin.settings.serverMode === "attach") {
+			const retry = buttons.createEl("button", { cls: "mod-cta", text: "Check again" });
+			retry.addEventListener("click", () => void this.plugin.refreshEnvironment());
+			const usePrivate = buttons.createEl("button", { text: "Use a private server" });
+			usePrivate.addEventListener("click", () => void this.plugin.usePrivateServer());
+		} else if (installed) {
+			const start = buttons.createEl("button", { cls: "mod-cta", text: "Start server" });
+			start.addEventListener("click", () => void this.plugin.startServer());
+		}
+		const setup = buttons.createEl("button", {
+			cls: installed ? "" : "mod-cta",
+			text: "Setup steps",
+		});
+		setup.addEventListener("click", () => this.plugin.openSetup());
+	}
+
+	// ================================================================ messages
+
+	private clearThread(): void {
+		this.threadEl.empty();
+		this.panelEl = null;
+		this.messageCount = 0;
+		this.onServerStatusChanged();
+	}
+
+	private scrollToBottom(): void {
+		this.threadEl.scrollTo({ top: this.threadEl.scrollHeight, behavior: "smooth" });
+	}
+
+	private addUserMessage(text: string): void {
+		this.removePanel();
+		this.messageCount++;
+		const row = this.threadEl.createDiv({ cls: "memanto-msg is-user" });
+		row.createDiv({ cls: "memanto-bubble", text });
+		this.scrollToBottom();
+	}
+
+	private addAssistantShell(mode: Mode, state: MascotState): {
+		row: HTMLElement;
+		body: HTMLElement;
+		avatar: HTMLElement;
+	} {
+		this.removePanel();
+		this.messageCount++;
+		const row = this.threadEl.createDiv({ cls: "memanto-msg is-assistant" });
+		const avatar = createMascot(row, state, "is-avatar");
+		const body = row.createDiv({ cls: "memanto-msg-body" });
+		const label = body.createDiv({ cls: `memanto-msg-label is-${mode}` });
+		setIcon(label.createSpan(), mode === "answer" ? "sparkles" : "search");
+		label.createSpan({ text: mode === "answer" ? "Answer" : "Recall" });
+		return { row, body, avatar };
+	}
+
+	private addDivider(text: string): void {
+		this.threadEl.createDiv({ cls: "memanto-divider", text });
+		this.scrollToBottom();
+	}
+
+	// ================================================================== submit
+
+	private ask(text: string, types?: string[]): void {
+		if (types) {
+			this.selectedTypes = new Set(types);
+			this.temporal = "search";
+			this.renderOptions();
+		}
+		this.inputEl.value = text;
+		void this.submit();
+	}
+
+	private runTemporal(temporal: Temporal): void {
+		this.temporal = temporal;
+		this.renderOptions();
+		this.updatePlaceholder();
+		this.inputEl.value = "";
+		void this.submit();
 	}
 
 	private async submit(): Promise<void> {
-		if (this.busy) return;
+		if (this.busy || this.plugin.serverStatus !== "online") return;
 
 		const agentId = this.agentSelect.value;
 		if (!agentId) {
-			this.setStatus("Choose an agent first.");
+			new Notice("Memanto: choose an agent first.");
 			return;
 		}
 
-		const query = this.queryInput.value.trim();
-		const needsQuery = this.mode === "answer" || this.temporal === "search";
-		if (needsQuery && !query) {
-			this.setStatus(this.mode === "answer" ? "Ask a question first." : "Enter a search first.");
+		const text = this.inputEl.value.trim();
+		const needsText = this.mode === "answer" || this.temporal === "search";
+		if (needsText && !text) {
+			this.inputEl.focus();
 			return;
 		}
+
+		const mode = this.mode;
+		this.addUserMessage(text || this.describeTemporal());
+		this.inputEl.value = "";
+		this.autoGrow();
+
+		const { row, body, avatar } = this.addAssistantShell(mode, "walking");
+		const thinking = body.createDiv({ cls: "memanto-thinking" });
+		thinking.createSpan({ text: mode === "answer" ? "Thinking" : "Recalling" });
+		const dots = thinking.createSpan({ cls: "memanto-dots" });
+		for (let i = 0; i < 3; i++) dots.createSpan();
+		this.scrollToBottom();
 
 		this.busy = true;
-		this.setStatus(this.mode === "answer" ? "Thinking…" : "Searching…");
-		this.resultsEl.empty();
-
+		this.sendButton.disabled = true;
 		try {
-			if (this.mode === "answer") await this.runAnswer(agentId, query);
-			else await this.runRecall(agentId, query);
+			if (mode === "answer") await this.renderAnswer(body, agentId, text);
+			else await this.renderRecall(body, agentId, text);
+			row.addClass("is-done");
 		} catch (error) {
-			this.showError(error);
+			if (error instanceof MemantoOfflineError) void this.plugin.refreshEnvironment();
+			body.createDiv({ cls: "memanto-error", text: describe(error) });
+			row.addClass("is-error");
 		} finally {
+			thinking.remove();
+			setMascotState(avatar, "idle");
 			this.busy = false;
+			this.sendButton.disabled = this.plugin.serverStatus !== "online";
+			this.scrollToBottom();
 		}
 	}
 
-	private async runAnswer(agentId: string, question: string): Promise<void> {
-		const response = await this.plugin.client.answer(agentId, question);
-		this.setStatus("");
-		this.renderAnswer(question, response.answer, response.sources ?? []);
+	private describeTemporal(): string {
+		switch (this.temporal) {
+			case "recent":
+				return "Show the most recent memories";
+			case "as-of":
+				return `What was true as of ${this.dateValue()}?`;
+			case "changed-since":
+				return `What changed since ${this.dateValue()}?`;
+			default:
+				return "";
+		}
 	}
 
-	private async runRecall(agentId: string, query: string): Promise<void> {
+	private dateValue(): string {
+		return this.dateInput?.value || isoDate(new Date());
+	}
+
+	private async renderAnswer(body: HTMLElement, agentId: string, question: string): Promise<void> {
+		const response = await this.plugin.client.answer(agentId, question);
+		const answer = response.answer?.trim() || "Memanto had nothing to say about that.";
+
+		const content = body.createDiv({ cls: "memanto-answer markdown-rendered" });
+		await MarkdownRenderer.render(this.app, answer, content, "", this);
+		this.addActions(body, answer);
+
+		const sources = response.sources ?? [];
+		if (sources.length === 0) return;
+		const details = body.createEl("details", { cls: "memanto-sources" });
+		details.createEl("summary", {
+			text: `${sources.length} ${sources.length === 1 ? "source" : "sources"}`,
+		});
+		for (const source of sources) this.renderMemoryCard(details, source);
+	}
+
+	private async renderRecall(body: HTMLElement, agentId: string, query: string): Promise<void> {
 		const client = this.plugin.client;
 		const options = {
 			limit: this.plugin.settings.recallLimit,
@@ -260,106 +609,101 @@ export class MemantoView extends ItemView {
 				memories = (await client.recallRecent(agentId, options)).memories;
 				break;
 			case "as-of":
-				memories = (await client.recallAsOf(agentId, this.temporalDate(), options)).memories;
+				memories = (await client.recallAsOf(agentId, this.dateValue(), options)).memories;
 				break;
 			case "changed-since":
-				memories = (await client.recallChangedSince(agentId, this.temporalDate(), options))
-					.memories;
+				memories = (await client.recallChangedSince(agentId, this.dateValue(), options)).memories;
 				break;
 			default:
 				memories = (await client.recall(agentId, query, options)).memories;
 		}
 
-		this.setStatus(
-			memories.length === 0
-				? "Nothing matched."
-				: `${memories.length} ${memories.length === 1 ? "memory" : "memories"}.`,
-		);
-		for (const memory of memories) this.renderMemory(memory);
-	}
+		if (memories.length === 0) {
+			body.createDiv({
+				cls: "memanto-summary",
+				text: "Nothing matched. Try different words, or fewer type filters.",
+			});
+			return;
+		}
 
-	private temporalDate(): string {
-		return this.temporalInput?.value || new Date().toISOString().slice(0, 10);
-	}
-
-	// -------------------------------------------------------------- rendering
-
-	private renderAnswer(question: string, answer: string, sources: MemoryItem[]): void {
-		const card = this.resultsEl.createDiv({ cls: "memanto-card memanto-answer" });
-		card.createEl("p", { cls: "memanto-question", text: question });
-		card.createEl("div", { cls: "memanto-answer-body", text: answer });
-
-		this.renderActions(card, answer);
-
-		if (sources.length === 0) return;
-		const details = card.createEl("details", { cls: "memanto-sources" });
-		details.createEl("summary", {
-			text: `${sources.length} ${sources.length === 1 ? "source" : "sources"}`,
+		body.createDiv({
+			cls: "memanto-summary",
+			text: `Found ${memories.length} ${memories.length === 1 ? "memory" : "memories"}`,
 		});
-		for (const source of sources) this.renderMemory(source, details);
+		const list = body.createDiv({ cls: "memanto-cards" });
+		for (const memory of memories) this.renderMemoryCard(list, memory);
 	}
 
-	private renderMemory(memory: MemoryItem, parent: HTMLElement = this.resultsEl): void {
+	private renderMemoryCard(parent: HTMLElement, memory: MemoryItem): void {
 		const card = parent.createDiv({ cls: "memanto-card" });
 		const text = memoryText(memory);
 
-		const meta = card.createDiv({ cls: "memanto-meta" });
-		if (memory.type) meta.createSpan({ cls: `memanto-pill type-${memory.type}`, text: memory.type });
+		const meta = card.createDiv({ cls: "memanto-card-meta" });
+		if (memory.type) {
+			meta.createSpan({ cls: `memanto-type type-${memory.type}`, text: memory.type });
+		}
 		if (memory.status && memory.status !== "active") {
-			meta.createSpan({ cls: "memanto-pill is-expired", text: memory.status });
+			meta.createSpan({ cls: "memanto-type is-expired", text: memory.status });
 		}
 		if (typeof memory.confidence === "number") {
-			this.renderConfidence(meta, memory.confidence);
+			const confidence = Math.max(0, Math.min(1, memory.confidence));
+			const bar = meta.createDiv({ cls: "memanto-confidence" });
+			bar.setAttr("aria-label", `Confidence ${Math.round(confidence * 100)}%`);
+			const fill = bar.createDiv({ cls: "memanto-confidence-fill" });
+			fill.style.width = `${confidence * 100}%`;
+			fill.toggleClass("is-low", confidence < 0.5);
+			meta.createSpan({ cls: "memanto-confidence-value", text: `${Math.round(confidence * 100)}%` });
 		}
 
-		if (memory.title) card.createEl("h4", { cls: "memanto-title", text: memory.title });
-		card.createEl("p", { cls: "memanto-body", text: text });
+		// Memanto derives a title from the first line when none is given, so the
+		// title is often just the start of the text. Showing both reads as a stutter.
+		const title = memory.title?.replace(/(\.\.\.|…)\s*$/, "").trim();
+		if (title && !text.startsWith(title)) {
+			card.createDiv({ cls: "memanto-card-title", text: memory.title });
+		}
+		const content = card.createDiv({ cls: "memanto-card-text", text });
+		content.addEventListener("click", () => content.toggleClass("is-expanded", !content.hasClass("is-expanded")));
 
-		const footer = card.createDiv({ cls: "memanto-footer" });
 		const facts: string[] = [];
 		if (memory.provenance) facts.push(memory.provenance.replace(/_/g, " "));
 		if (memory.source) facts.push(memory.source);
 		if (memory.created_at) facts.push(formatDate(memory.created_at));
-		if (typeof memory.score === "number") facts.push(`score ${memory.score.toFixed(2)}`);
-		footer.createSpan({ cls: "memanto-facts", text: facts.join(" · ") });
+		if (facts.length) card.createDiv({ cls: "memanto-card-facts", text: facts.join(" · ") });
 
-		this.renderActions(card, text, memory);
+		this.addActions(card, text, memory);
 	}
 
-	/** Confidence as a bar, because a bare 0.87 reads as noise in a list. */
-	private renderConfidence(container: HTMLElement, confidence: number): void {
-		const wrap = container.createDiv({ cls: "memanto-confidence" });
-		wrap.setAttr("aria-label", `Confidence ${Math.round(confidence * 100)}%`);
-		const fill = wrap.createDiv({ cls: "memanto-confidence-fill" });
-		fill.style.width = `${Math.max(0, Math.min(1, confidence)) * 100}%`;
-		if (confidence < 0.5) fill.addClass("is-low");
-		container.createSpan({
-			cls: "memanto-confidence-value",
-			text: confidence.toFixed(2),
-		});
-	}
+	private addActions(parent: HTMLElement, text: string, memory?: MemoryItem): void {
+		const actions = parent.createDiv({ cls: "memanto-actions" });
 
-	private renderActions(card: HTMLElement, text: string, memory?: MemoryItem): void {
-		const actions = card.createDiv({ cls: "memanto-actions" });
+		this.iconButton(actions, "text-cursor-input", "Insert into note", () =>
+			this.insertIntoNote(text, memory),
+		);
 
-		const insert = actions.createEl("button", { text: "Insert at cursor" });
-		insert.addEventListener("click", () => this.insertAtCursor(text, memory));
-
-		const copy = actions.createEl("button", { text: "Copy" });
-		copy.addEventListener("click", async () => {
+		const copy = this.iconButton(actions, "copy", "Copy", async () => {
 			await navigator.clipboard.writeText(text);
-			copy.setText("Copied");
-			setTimeout(() => copy.setText("Copy"), 1200);
+			setIcon(copy, "check");
+			setTimeout(() => setIcon(copy, "copy"), 1200);
 		});
 
-		if (!memory?.id) return;
-		const open = actions.createEl("button", { text: "Open note" });
-		open.addEventListener("click", () => void this.openSyncedNote(memory.id as string));
+		if (memory?.id) {
+			this.iconButton(actions, "file-text", "Open synced note", () =>
+				void this.openSyncedNote(memory.id as string),
+			);
+		}
 	}
 
-	private insertAtCursor(text: string, memory?: MemoryItem): void {
-		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-		if (!view) {
+	/**
+	 * Insert into the note the reader was last editing.
+	 *
+	 * Clicking in this pane makes the pane the active view, so looking up the
+	 * active MarkdownView would always come back empty. Use the most recent leaf
+	 * in the main editing area instead.
+	 */
+	private insertIntoNote(text: string, memory?: MemoryItem): void {
+		const leaf = this.app.workspace.getMostRecentLeaf(this.app.workspace.rootSplit);
+		const view = leaf?.view;
+		if (!(view instanceof MarkdownView)) {
 			new Notice("Open a note first, then insert.");
 			return;
 		}
@@ -373,101 +717,47 @@ export class MemantoView extends ItemView {
 		}
 
 		view.editor.replaceSelection(payload);
+		new Notice(`Inserted into ${view.file?.basename ?? "note"}.`);
 	}
 
 	/**
-	 * Jump to the synced note for a memory.
-	 *
-	 * The OKF bundle carries the memory id in `x_memanto.id`, so the metadata
-	 * cache can find the note without us maintaining a second index.
+	 * Jump to the synced note for a memory. The OKF bundle carries the memory id
+	 * in `x_memanto.id`, so the metadata cache finds it with no second index.
 	 */
 	private async openSyncedNote(memoryId: string): Promise<void> {
 		const folder = this.plugin.settings.syncFolder;
 		const match = this.app.vault.getMarkdownFiles().find((file) => {
 			if (!file.path.startsWith(`${folder}/`)) return false;
-			const cache = this.app.metadataCache.getFileCache(file);
-			const block = cache?.frontmatter?.x_memanto as { id?: string } | undefined;
+			const block = this.app.metadataCache.getFileCache(file)?.frontmatter?.x_memanto as
+				| { id?: string }
+				| undefined;
 			return block?.id === memoryId;
 		});
 
 		if (!match) {
-			new Notice("No synced note for this memory yet. Run “Sync memories to vault”.");
+			new Notice("No synced note for this memory yet. Use “Sync memories to vault” first.");
 			return;
 		}
 		await this.app.workspace.getLeaf(false).openFile(match);
 	}
+}
 
-	// ----------------------------------------------------------------- states
+function describe(error: unknown): string {
+	if (error instanceof MemantoOfflineError) return "The Memanto server stopped responding.";
+	if (error instanceof MemantoApiError) return error.message;
+	if (error instanceof Error) return error.message;
+	return "Something went wrong.";
+}
 
-	private clearResults(): void {
-		this.resultsEl.empty();
-		this.showIdleState();
-	}
+function isoDate(date: Date): string {
+	const pad = (value: number) => String(value).padStart(2, "0");
+	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
 
-	private showIdleState(): void {
-		const environment = this.plugin.environment;
-		if (!environment?.serverUp) {
-			this.showOfflineState();
-			return;
-		}
-		this.setStatus(
-			this.mode === "answer"
-				? "Ask a question and Memanto answers from what your agents stored."
-				: "Search the estate, or pick a temporal view.",
-		);
-	}
-
-	/**
-	 * The most common failure by far, so it gets a real explanation and a way
-	 * out rather than an error string.
-	 */
-	private showOfflineState(): void {
-		this.resultsEl.empty();
-		this.setStatus("");
-
-		const empty = this.resultsEl.createDiv({ cls: "memanto-empty" });
-		empty.createEl("h4", { text: "No Memanto server" });
-		empty.createEl("p", {
-			text: `Nothing is answering at ${this.plugin.environment?.baseUrl ?? "the configured address"}. Synced notes still work — this pane needs the server.`,
-		});
-
-		const retry = empty.createEl("button", { text: "Check again", cls: "mod-cta" });
-		retry.addEventListener("click", async () => {
-			await this.plugin.refreshEnvironment();
-			await this.loadAgents();
-		});
-
-		empty
-			.createEl("button", { text: "Setup steps" })
-			.addEventListener("click", () => this.plugin.openSetup());
-	}
-
-	private showError(error: unknown): void {
-		this.resultsEl.empty();
-
-		if (error instanceof MemantoOfflineError) {
-			void this.plugin.refreshEnvironment();
-			this.showOfflineState();
-			return;
-		}
-
-		const message =
-			error instanceof MemantoApiError
-				? error.message
-				: error instanceof Error
-					? error.message
-					: "Something went wrong.";
-
-		this.setStatus("");
-		const empty = this.resultsEl.createDiv({ cls: "memanto-empty" });
-		empty.createEl("h4", { text: "Memanto could not answer" });
-		empty.createEl("p", { text: message });
-	}
-
-	private setStatus(text: string): void {
-		this.statusEl.setText(text);
-		this.statusEl.toggleClass("is-hidden", text === "");
-	}
+function daysAgo(days: number): Date {
+	const date = new Date();
+	date.setDate(date.getDate() - days);
+	return date;
 }
 
 function formatDate(value: string): string {

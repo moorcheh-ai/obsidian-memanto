@@ -27,10 +27,10 @@ SORT file.name
 Notes you edit by hand are never overwritten. A sync that would clobber your changes skips
 that file and tells you which ones it left alone.
 
-**Searches and questions the estate from a side pane.** Pick an agent, then either
-**Recall** for a ranked list of what is stored, or **Answer** for a grounded reply. Results
-carry their type, confidence, provenance and date, and can be inserted straight into the
-note you are writing.
+**Chat with the estate from the sidebar.** Pick an agent, then switch between **Recall**
+for a ranked list of what is stored, and **Answer** for a grounded reply. Every reply is
+labelled with the mode that produced it; recalled memories carry their type, confidence,
+provenance and date, and anything can be inserted straight into the note you are writing.
 
 Recall also does time: most recent, as of a date, or changed since a date.
 
@@ -38,7 +38,7 @@ Recall also does time: most recent, as of a date, or changed since a date.
 
 - **Obsidian 1.7.2** or newer, **desktop only.** Memanto runs as a local server on
   `127.0.0.1`, which mobile cannot reach. Notes synced into the vault are plain Markdown
-  and read fine on mobile — the side pane is what needs the desktop.
+  and read fine on mobile — the chat is what needs the desktop.
 - **[Memanto](https://github.com/moorcheh-ai/memanto)** installed and configured. It is a
   Python command-line tool and needs Python 3.11 or newer.
 
@@ -49,15 +49,14 @@ shows you the commands for whatever is missing, with a copy button on each. Open
 time from the command palette: **Memanto: Setup steps**.
 
 If you already use Memanto, there is nothing to configure. The plugin reads the API key
-from the environment where the CLI stored it, and the port and active agent from
+from `~/.memanto/.env`, where the CLI stored it, and your active agent from
 `~/.memanto/config.yaml`. Most existing users never see the setup screen.
 
-Starting from nothing, it is four commands:
+Starting from nothing, it is two commands — the plugin runs the server itself:
 
 ```bash
 pip install memanto          # or: uv tool install memanto / pipx install memanto
 memanto                      # asks which backend, stores your key
-memanto serve                # leave running, or let the plugin manage it
 ```
 
 For the cloud backend you need a free key from
@@ -69,34 +68,46 @@ everything locally through Docker, and nothing leaves your machine.
 
 | Command | What it does |
 | --- | --- |
-| **Memanto: Open side pane** | Recall and answer against the running server. |
+| **Memanto: Open chat** | Recall and answer in the sidebar. Also on the ribbon. |
 | **Memanto: Sync memories to vault** | Export the estate and write it into your sync folder. |
+| **Memanto: Start server** | Retry starting the private server after a failure. |
 | **Memanto: Setup steps** | The install walkthrough, with copyable commands. |
 
 ## Network use and privacy
 
-The plugin itself talks to exactly one address: the Memanto server on your own machine,
-by default `http://127.0.0.1:8000`. It contacts no other host.
+The plugin itself talks to exactly one address: a Memanto server on your own machine,
+bound to `127.0.0.1`. It contacts no other host.
 
 That local server is what reaches the network, and only if you configured the **cloud**
 backend — in which case your memories are stored by [Moorcheh](https://www.moorcheh.ai).
 Configure Memanto with the **on-prem** backend instead and nothing leaves your machine.
 Run `memanto config show` to see which is active.
 
-Your API key is read from the `MOORCHEH_API_KEY` environment variable, where the Memanto
-CLI puts it. **The plugin never writes it into the vault**, because vault files sync to
-your other devices and to any git remote you have configured.
+Your API key is read from `~/.memanto/.env`, where the Memanto CLI puts it. **The plugin
+never writes it into the vault**, because vault files sync to your other devices and to
+any git remote you have configured.
 
 The plugin sends nothing from your vault to Memanto. It only reads.
 
-## Managing the server
+## The server
 
-By default the plugin connects to a server if one is running and otherwise tells you to
-start one. Set **Server** to *Start and stop with Obsidian* in settings and it will run
-`memanto serve` for you, using the `memanto` executable already on your PATH.
+When Obsidian opens, the plugin starts its own **private** `memanto serve` on a free
+loopback port, using the `memanto` executable on your PATH, and stops it when Obsidian
+closes. If you also run `memanto serve` yourself — on 8000 or anywhere else — the plugin
+never uses, starts or stops it. Each open vault gets its own private server.
 
-It never starts a second server when one is already listening, and it never stops a server
-it did not start.
+If Obsidian crashes before it can stop the server, the next launch reconnects to that
+same process instead of starting another, and stops it at the end of that session.
+
+Prefer to run the server yourself? Set **Server** to *Connect to my own server* in
+settings, and the plugin follows the address in `~/.memanto/config.yaml`.
+
+### Sessions
+
+Memanto keeps one session per agent, and starting a new one signs out every other client
+using that agent — the CLI, and any coding agent sharing it. So the plugin **joins the
+agent's existing session** when there is a live one, and only starts a session when the
+agent has none. Your terminal and your coding agents stay signed in while you chat.
 
 ## Building from source
 

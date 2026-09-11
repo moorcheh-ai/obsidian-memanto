@@ -173,12 +173,12 @@ export class SetupModal extends Modal {
 				done: environment.serverUp,
 				body: (container) => {
 					container.createEl("p", {
-						text: `The side pane talks to a local Memanto server at ${environment.baseUrl}. Leave this running in a terminal:`,
+						text: "The chat talks to a local Memanto server. Once Memanto is installed, the plugin starts a private one for you when Obsidian opens, and stops it when Obsidian closes. To check the CLI can run a server, try:",
 					});
 					command(container, "memanto serve");
 					container.createEl("p", {
 						cls: "memanto-hint",
-						text: "Or set “Server” to “Start and stop with Obsidian” in the plugin settings, and this plugin will run it for you.",
+						text: "After installing, choose Re-check and the plugin starts the server automatically.",
 					});
 				},
 			},

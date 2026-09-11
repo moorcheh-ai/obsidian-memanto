@@ -33,6 +33,8 @@ export interface ClientConfig {
 	baseUrl: string;
 	/** Read from the Memanto CLI at call time; never persisted by this plugin. */
 	apiKey: string | null;
+	/** The agent's existing live session token, from Memanto's session files. */
+	readSessionToken?: (agentId: string) => string | null;
 }
 
 export interface RecallOptions {
@@ -48,8 +50,12 @@ export interface RecallOptions {
  *
  * Two credentials are in play and they are not interchangeable: agent
  * management (`GET /agents`, activation) takes `X-Api-Key`, while every memory
- * operation takes the `X-Session-Token` handed back by activation. Sessions are
- * cached per agent in memory only, and re-activated transparently on a 401.
+ * operation takes an `X-Session-Token`.
+ *
+ * Memanto allows one session per agent, and activating a new one invalidates
+ * every token already issued for that agent — the CLI's, and those held by any
+ * coding agent sharing it. So this client joins the agent's existing session
+ * whenever there is a live one, and only activates when there is none.
  */
 export class MemantoClient {
 	private sessions = new Map<string, string>();
@@ -131,14 +137,26 @@ export class MemantoClient {
 		return session.session_token;
 	}
 
+	private existingSession(agentId: string): string | null {
+		const token = this.getConfig().readSessionToken?.(agentId) ?? null;
+		if (token) this.sessions.set(agentId, token);
+		return token;
+	}
+
 	private async sessionToken(agentId: string): Promise<string> {
-		return this.sessions.get(agentId) ?? (await this.activate(agentId));
+		return (
+			this.sessions.get(agentId) ?? this.existingSession(agentId) ?? (await this.activate(agentId))
+		);
 	}
 
 	/**
-	 * Run a session-scoped call, activating first and retrying once if the
-	 * cached token has lapsed. The server may hand back a renewed token in the
-	 * `X-Session-Token` response header; adopt it when it does.
+	 * Run a session-scoped call.
+	 *
+	 * On a 401 the token we held has been rotated — by auto-renewal, or by
+	 * another client activating the same agent. Prefer picking up the new token
+	 * from the session file over activating yet another session, which would in
+	 * turn sign that other client out. The server may also hand back a renewed
+	 * token in the `X-Session-Token` response header; adopt it when it does.
 	 */
 	private async sessionCall<T>(agentId: string, path: string, body: unknown): Promise<T> {
 		const send = async (token: string): Promise<RequestUrlResponse> =>
@@ -148,12 +166,16 @@ export class MemantoClient {
 			});
 
 		let response: RequestUrlResponse;
+		const token = await this.sessionToken(agentId);
 		try {
-			response = await send(await this.sessionToken(agentId));
+			response = await send(token);
 		} catch (error) {
 			if (!(error instanceof MemantoApiError) || error.status !== 401) throw error;
 			this.sessions.delete(agentId);
-			response = await send(await this.activate(agentId));
+			const rotated = this.existingSession(agentId);
+			response = await send(
+				rotated && rotated !== token ? rotated : await this.activate(agentId),
+			);
 		}
 
 		const renewed = response.headers?.["x-session-token"];

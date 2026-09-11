@@ -1,110 +1,198 @@
-import { Notice, Plugin, type WorkspaceLeaf } from "obsidian";
+import { createHash } from "crypto";
+import { addIcon, FileSystemAdapter, Notice, Plugin, type WorkspaceLeaf } from "obsidian";
 import { MemantoClient } from "./api/client";
-import { detect, needsSetup, resolveBaseUrl, type Environment } from "./env/detect";
+import {
+	detect,
+	needsSetup,
+	readSessionToken,
+	resolveBaseUrl,
+	type Environment,
+} from "./env/detect";
 import { ServerManager } from "./server/lifecycle";
 import { DEFAULT_SETTINGS, MemantoSettingTab, type MemantoSettings } from "./settings";
 import { NoBundleError, OkfSync } from "./sync/okf";
+import { MASCOT_ICON } from "./ui/mascot";
 import { SetupModal } from "./ui/setup-modal";
 import { MEMANTO_VIEW_TYPE, MemantoView } from "./ui/view";
+
+export type ServerStatus = "checking" | "starting" | "online" | "offline";
 
 export default class MemantoPlugin extends Plugin {
 	settings!: MemantoSettings;
 	client!: MemantoClient;
 	environment: Environment | null = null;
+	serverStatus: ServerStatus = "checking";
+	/** Why the last start attempt failed, shown in the pane's offline state. */
+	lastServerError: string | null = null;
 
 	private servers!: ServerManager;
 	private sync!: OkfSync;
+	private settingTab!: MemantoSettingTab;
+	private refreshing: Promise<Environment> | null = null;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
+		addIcon("memanto", MASCOT_ICON);
 
 		this.client = new MemantoClient(() => ({
 			baseUrl: this.environment?.baseUrl ?? resolveBaseUrl(this.settings.baseUrlOverride),
 			apiKey: this.environment?.apiKey ?? null,
+			readSessionToken,
 		}));
 
 		this.servers = new ServerManager(
 			(baseUrl) => this.probe(baseUrl),
 			(message) => console.info(`[Memanto] ${message}`),
+			this.instanceKey(),
 		);
 		this.sync = new OkfSync(this.app, this);
 
 		this.registerView(MEMANTO_VIEW_TYPE, (leaf: WorkspaceLeaf) => new MemantoView(leaf, this));
-		this.addSettingTab(new MemantoSettingTab(this.app, this));
+		this.settingTab = new MemantoSettingTab(this.app, this);
+		this.addSettingTab(this.settingTab);
 
-		this.addRibbonIcon("brain-circuit", "Memanto", () => void this.activateView());
+		this.addRibbonIcon("memanto", "Open Memanto", () => void this.activateView());
 
 		this.addCommand({
 			id: "open-pane",
-			name: "Open side pane",
+			name: "Open chat",
 			callback: () => void this.activateView(),
 		});
-
 		this.addCommand({
 			id: "sync-to-vault",
 			name: "Sync memories to vault",
 			callback: () => void this.syncToVault(),
 		});
-
+		this.addCommand({
+			id: "start-server",
+			name: "Start server",
+			callback: () => void this.startServer(),
+		});
 		this.addCommand({
 			id: "open-setup",
 			name: "Setup steps",
 			callback: () => this.openSetup(),
 		});
 
-		// Defer everything that touches the filesystem or spawns a process until
-		// the workspace is ready, so plugin load never delays vault startup.
+		// Stop a server we started when Obsidian quits. Three hooks, because none
+		// is guaranteed alone: `quit` may not fire, `beforeunload` covers window
+		// close, and `onunload` covers disabling the plugin.
+		this.registerEvent(this.app.workspace.on("quit", () => this.servers.stop()));
+		this.registerDomEvent(window, "beforeunload", () => this.servers.stop());
+
+		// Everything that touches the filesystem or spawns a process waits for the
+		// workspace, so plugin load never delays opening the vault.
 		this.app.workspace.onLayoutReady(() => void this.start());
 	}
 
 	onunload(): void {
-		// Only ever stops a server this plugin started.
 		this.servers.stop();
 	}
 
 	private async start(): Promise<void> {
-		await this.refreshEnvironment();
+		const environment = await this.refreshEnvironment();
 
-		if (this.environment && needsSetup(this.environment) && !this.settings.agentId) {
+		if (needsSetup(environment) && !this.settings.agentId) {
 			// First run on a machine without Memanto: show the steps once, rather
 			// than leaving an empty pane with no explanation.
 			this.openSetup();
 		}
 
-		if (this.settings.syncOnStartup) await this.syncToVault({ quiet: true });
+		if (this.settings.syncOnStartup && environment.serverUp) {
+			await this.syncToVault({ quiet: true });
+		}
 	}
 
 	/**
-	 * Re-run detection, then bring up a server if the user asked us to manage one.
+	 * Re-run detection and bring the server this plugin talks to up.
 	 *
-	 * Everything downstream reads `this.environment`, so this is the single place
-	 * where the plugin's picture of the world changes.
+	 * This is the single place the plugin's picture of the world changes, and
+	 * concurrent callers share one run instead of racing two server starts.
 	 */
-	async refreshEnvironment(): Promise<Environment> {
-		const environment = await detect(this.settings.baseUrlOverride, (url) => this.probe(url));
+	refreshEnvironment(): Promise<Environment> {
+		if (!this.refreshing) {
+			this.refreshing = this.doRefresh(this.settings.serverMode === "dedicated").finally(() => {
+				this.refreshing = null;
+			});
+		}
+		return this.refreshing;
+	}
 
-		if (!environment.serverUp && this.settings.serverMode === "manage") {
-			const state = await this.servers.ensure(
-				"manage",
-				environment.baseUrl,
-				environment.binaryPath,
-			);
+	/** Explicit user request: retry starting the private server after a failure. */
+	async startServer(): Promise<void> {
+		if (this.refreshing) await this.refreshing;
+		const environment = await this.refreshEnvironment();
+		if (!environment.serverUp && this.lastServerError) {
+			new Notice(`Memanto: ${this.lastServerError}`, 8000);
+		}
+	}
+
+	/** Leave "connect to my own server" and let the plugin run a private one. */
+	async usePrivateServer(): Promise<void> {
+		this.settings.serverMode = "dedicated";
+		await this.saveSettings();
+		await this.refreshEnvironment();
+	}
+
+	/** The private server's pid, when the plugin is running one. */
+	get serverPid(): number | null {
+		return this.servers?.pid ?? null;
+	}
+
+	/**
+	 * @param dedicated Use the plugin's own private server. A server the user
+	 *   runs themselves is then never used, started or stopped. Otherwise connect
+	 *   to the address in `~/.memanto/config.yaml` or the settings override.
+	 */
+	private async doRefresh(dedicated: boolean): Promise<Environment> {
+		this.setServerStatus("checking");
+		const environment = await detect(this.settings.baseUrlOverride, (url) => this.probe(url));
+		this.environment = environment;
+
+		if (dedicated) {
+			// `detect` probed the user's configured server; in dedicated mode that
+			// server is deliberately ignored, so the answer comes from ours alone.
+			environment.serverUp = false;
+			if (!this.servers.baseUrl && environment.binaryPath) this.setServerStatus("starting");
+
+			const state = await this.servers.ensureDedicated(environment.binaryPath);
 			if (state.running) {
 				environment.serverUp = true;
 				environment.baseUrl = state.baseUrl;
-				new Notice(`Memanto: ${state.message}`);
+				this.lastServerError = null;
+			} else {
+				environment.baseUrl = "";
+				this.lastServerError = environment.binaryPath ? state.message : null;
 			}
+		} else {
+			// Switching to "connect to my own server" retires the private one.
+			this.servers.stop();
+			this.lastServerError = null;
 		}
 
-		this.environment = environment;
 		this.client.reset();
+		this.setServerStatus(environment.serverUp ? "online" : "offline");
 		return environment;
 	}
 
-	/** Liveness probe that never throws, for both detection and the server manager. */
+	/** Stable per-vault key, so two open vaults never share a private server. */
+	private instanceKey(): string {
+		const adapter = this.app.vault.adapter;
+		const identity =
+			adapter instanceof FileSystemAdapter ? adapter.getBasePath() : this.app.vault.getName();
+		return createHash("sha1").update(identity).digest("hex").slice(0, 12);
+	}
+
+	private setServerStatus(status: ServerStatus): void {
+		this.serverStatus = status;
+		for (const leaf of this.app.workspace.getLeavesOfType(MEMANTO_VIEW_TYPE)) {
+			if (leaf.view instanceof MemantoView) leaf.view.onServerStatusChanged();
+		}
+	}
+
+	/** Liveness probe that never throws, shared by detection and the server manager. */
 	private async probe(baseUrl: string): Promise<boolean> {
-		const probeClient = new MemantoClient(() => ({ baseUrl, apiKey: null }));
-		return probeClient.isUp();
+		return new MemantoClient(() => ({ baseUrl, apiKey: null })).isUp();
 	}
 
 	async syncToVault(options: { quiet?: boolean } = {}): Promise<void> {
@@ -112,7 +200,7 @@ export default class MemantoPlugin extends Plugin {
 		const agentId = this.settings.agentId || environment.activeAgentId;
 
 		if (!agentId) {
-			new Notice("Memanto: choose an agent in the side pane first.");
+			new Notice("Memanto: choose an agent in the chat pane first.");
 			return;
 		}
 
@@ -136,7 +224,7 @@ export default class MemantoPlugin extends Plugin {
 			}
 			if (result.source === "cache") parts.push("from a cached export");
 
-			new Notice(`Memanto: ${parts.join(", ")}.`);
+			new Notice(`Memanto: ${parts.join(", ")} in ${result.folder}.`);
 		} catch (error) {
 			notice?.hide();
 			if (error instanceof NoBundleError) {
@@ -152,9 +240,20 @@ export default class MemantoPlugin extends Plugin {
 	}
 
 	openSetup(): void {
-		const environment = this.environment;
-		if (!environment) return;
-		new SetupModal(this.app, environment, () => this.refreshEnvironment()).open();
+		const show = (environment: Environment) =>
+			new SetupModal(this.app, environment, () => this.refreshEnvironment()).open();
+
+		if (this.environment) show(this.environment);
+		else void this.refreshEnvironment().then(show);
+	}
+
+	openSettings(): void {
+		const setting = (this.app as unknown as {
+			setting?: { open(): void; openTabById(id: string): void };
+		}).setting;
+		if (!setting) return;
+		setting.open();
+		setting.openTabById(this.manifest.id);
 	}
 
 	/** Reveal the pane, reusing an existing leaf rather than stacking duplicates. */
@@ -174,7 +273,13 @@ export default class MemantoPlugin extends Plugin {
 	}
 
 	async loadSettings(): Promise<void> {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		const stored = ((await this.loadData()) ?? {}) as Omit<Partial<MemantoSettings>, "serverMode"> & {
+			serverMode?: string;
+		};
+		// 0.1.0 called the plugin-managed server "manage", and it attached to the
+		// user's own server when one was running. Dedicated replaces it.
+		if (stored.serverMode !== "attach") stored.serverMode = "dedicated";
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, stored) as MemantoSettings;
 	}
 
 	async saveSettings(): Promise<void> {
