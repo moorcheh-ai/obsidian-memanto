@@ -185,15 +185,20 @@ const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "0.0.0.0", "[::1]", ":
  * - `0.0.0.0` is a bind address, not a destination; connect to `127.0.0.1`.
  */
 export function normalizeBaseUrl(raw: string, port: number | null): string {
-	let value = raw.trim().replace(/\/+$/, "");
+	const fallback = `http://127.0.0.1:${port ?? DEFAULT_PORT}`;
+	let value = raw.trim();
+	if (!value) return fallback;
+	// No manual trimming: URL drops any path when the origin is rebuilt below,
+	// and stripping slashes first would turn a bare "http://" into a hostname.
 	if (!/^https?:\/\//i.test(value)) value = `http://${value}`;
 
 	let url: URL;
 	try {
 		url = new URL(value);
 	} catch {
-		return `http://127.0.0.1:${port ?? DEFAULT_PORT}`;
+		return fallback;
 	}
+	if (!url.hostname) return fallback;
 
 	const loopback = LOOPBACK_HOSTS.has(url.hostname);
 	if (url.hostname === "0.0.0.0") url.hostname = "127.0.0.1";
