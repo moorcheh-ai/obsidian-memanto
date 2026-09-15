@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-memanto",
-	"version": "1.0.1",
+	"version": "1.0.2",
 	"description": "Memanto plugin for Obsidian.",
 	"main": "main.js",
 	"private": true,

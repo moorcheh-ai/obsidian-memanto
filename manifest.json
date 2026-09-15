@@ -1,7 +1,7 @@
 {
 	"id": "memanto",
 	"name": "Memanto",
-	"version": "1.0.1",
+	"version": "1.0.2",
 	"minAppVersion": "1.7.2",
 	"description": "Sync your agents' memory estate into the vault as Markdown, and recall or question it from a side pane.",
 	"author": "Moorcheh AI",
