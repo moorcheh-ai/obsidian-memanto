@@ -261,8 +261,9 @@ export class MemantoView extends ItemView {
 	}
 
 	private autoGrow(): void {
-		this.inputEl.style.height = "auto";
-		this.inputEl.style.height = `${Math.min(this.inputEl.scrollHeight, 160)}px`;
+		// Collapse first, so scrollHeight measures the text rather than the old box.
+		this.inputEl.setCssStyles({ height: "auto" });
+		this.inputEl.setCssStyles({ height: `${Math.min(this.inputEl.scrollHeight, 160)}px` });
 	}
 
 	// ============================================================ server status
@@ -650,7 +651,7 @@ export class MemantoView extends ItemView {
 			const bar = meta.createDiv({ cls: "memanto-confidence" });
 			bar.setAttr("aria-label", `Confidence ${Math.round(confidence * 100)}%`);
 			const fill = bar.createDiv({ cls: "memanto-confidence-fill" });
-			fill.style.width = `${confidence * 100}%`;
+			fill.setCssStyles({ width: `${confidence * 100}%` });
 			fill.toggleClass("is-low", confidence < 0.5);
 			meta.createSpan({ cls: "memanto-confidence-value", text: `${Math.round(confidence * 100)}%` });
 		}
@@ -680,10 +681,12 @@ export class MemantoView extends ItemView {
 			this.insertIntoNote(text, memory),
 		);
 
-		const copy = this.iconButton(actions, "copy", "Copy", async () => {
-			await navigator.clipboard.writeText(text);
-			setIcon(copy, "check");
-			setTimeout(() => setIcon(copy, "copy"), 1200);
+		const copy = this.iconButton(actions, "copy", "Copy", () => {
+			void (async () => {
+				await navigator.clipboard.writeText(text);
+				setIcon(copy, "check");
+				window.setTimeout(() => setIcon(copy, "copy"), 1200);
+			})();
 		});
 
 		if (memory?.id) {

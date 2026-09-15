@@ -178,7 +178,7 @@ export class OkfSync {
 				]);
 				const produced = join(staging, "okf");
 				if (existsSync(produced)) return { bundleDir: produced, source: "fresh" };
-			} catch (error) {
+			} catch {
 				// A failed export is not fatal while a previous bundle survives.
 				new Notice(`Memanto export failed, looking for a cached bundle.`);
 			}

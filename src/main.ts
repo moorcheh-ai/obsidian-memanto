@@ -220,7 +220,6 @@ export default class MemantoPlugin extends Plugin {
 			const parts = [`${result.created} new`, `${result.updated} updated`];
 			if (result.skipped.length > 0) {
 				parts.push(`${result.skipped.length} left alone (edited here)`);
-				console.info("[Memanto] Skipped edited notes:", result.skipped);
 			}
 			if (result.source === "cache") parts.push("from a cached export");
 
@@ -273,13 +272,8 @@ export default class MemantoPlugin extends Plugin {
 	}
 
 	async loadSettings(): Promise<void> {
-		const stored = ((await this.loadData()) ?? {}) as Omit<Partial<MemantoSettings>, "serverMode"> & {
-			serverMode?: string;
-		};
-		// 0.1.0 called the plugin-managed server "manage", and it attached to the
-		// user's own server when one was running. Dedicated replaces it.
-		if (stored.serverMode !== "attach") stored.serverMode = "dedicated";
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, stored) as MemantoSettings;
+		const stored = ((await this.loadData()) ?? {}) as Partial<MemantoSettings>;
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, stored);
 	}
 
 	async saveSettings(): Promise<void> {

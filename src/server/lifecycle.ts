@@ -245,7 +245,10 @@ export class ServerManager {
 		let record: { pid?: unknown; baseUrl?: unknown };
 		try {
 			if (!existsSync(this.pidFile)) return false;
-			record = JSON.parse(readFileSync(this.pidFile, "utf8"));
+			record = JSON.parse(readFileSync(this.pidFile, "utf8")) as {
+				pid?: unknown;
+				baseUrl?: unknown;
+			};
 		} catch {
 			return false;
 		}
@@ -341,5 +344,5 @@ function lastLine(text: string): string {
 }
 
 function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
+	return new Promise((resolve) => window.setTimeout(resolve, ms));
 }

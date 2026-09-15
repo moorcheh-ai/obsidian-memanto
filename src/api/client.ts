@@ -88,7 +88,7 @@ export class MemantoClient {
 				// 401 can be told apart from a dead server.
 				throw: false,
 			});
-		} catch (error) {
+		} catch {
 			throw new MemantoOfflineError(this.baseUrl);
 		}
 

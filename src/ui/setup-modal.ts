@@ -53,11 +53,13 @@ export class SetupModal extends Modal {
 			text: "Re-check",
 			cls: "mod-cta",
 		});
-		recheck.addEventListener("click", async () => {
-			recheck.disabled = true;
-			recheck.setText("Checking…");
-			this.environment = await this.onRecheck();
-			this.render();
+		recheck.addEventListener("click", () => {
+			void (async () => {
+				recheck.disabled = true;
+				recheck.setText("Checking…");
+				this.environment = await this.onRecheck();
+				this.render();
+			})();
 		});
 
 		footer.createEl("button", { text: "Close" }).addEventListener("click", () => this.close());
@@ -192,21 +194,23 @@ export function command(container: HTMLElement, text: string): void {
 	row.createEl("code", { text });
 
 	const button = row.createEl("button", { text: "Copy" });
-	button.addEventListener("click", async () => {
-		try {
-			await navigator.clipboard.writeText(text);
-			button.setText("Copied");
-			button.addClass("is-copied");
-			setTimeout(() => {
-				button.setText("Copy");
-				button.removeClass("is-copied");
-			}, 1400);
-		} catch {
-			new Notice(
-				Platform.isMacOS
-					? "Could not copy. Select the command and press Cmd+C."
-					: "Could not copy. Select the command and press Ctrl+C.",
-			);
-		}
+	button.addEventListener("click", () => {
+		void (async () => {
+			try {
+				await navigator.clipboard.writeText(text);
+				button.setText("Copied");
+				button.addClass("is-copied");
+				window.setTimeout(() => {
+					button.setText("Copy");
+					button.removeClass("is-copied");
+				}, 1400);
+			} catch {
+				new Notice(
+					Platform.isMacOS
+						? "Could not copy. Select the command and press Cmd+C."
+						: "Could not copy. Select the command and press Ctrl+C.",
+				);
+			}
+		})();
 	});
 }

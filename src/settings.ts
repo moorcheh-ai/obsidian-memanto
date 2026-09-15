@@ -108,7 +108,6 @@ export class MemantoSettingTab extends PluginSettingTab {
 			.addSlider((slider) =>
 				slider
 					.setLimits(5, 50, 5)
-					.setDynamicTooltip()
 					.setValue(this.plugin.settings.recallLimit)
 					.onChange(async (value) => {
 						this.plugin.settings.recallLimit = value;

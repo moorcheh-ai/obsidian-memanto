@@ -949,9 +949,12 @@
 	cursor: pointer;
 }
 
-.memanto-hint {
-	color: var(--text-faint) !important;
-	font-size: var(--font-ui-smaller) !important;
+/* Named parents so this outranks `.memanto-step-body p` and `.memanto-privacy p`
+   on specificity rather than with !important. */
+.memanto-step-body p.memanto-hint,
+.memanto-privacy p.memanto-hint {
+	color: var(--text-faint);
+	font-size: var(--font-ui-smaller);
 }
 
 .memanto-option {
