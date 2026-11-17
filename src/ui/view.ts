@@ -7,6 +7,7 @@ import {
 	type WorkspaceLeaf,
 } from "obsidian";
 import { MemantoApiError, MemantoOfflineError } from "../api/client";
+import { readActiveAgentId } from "../env/detect";
 import { MEMORY_TYPES, memoryText, type AgentInfo, type MemoryItem } from "../types";
 import type MemantoPlugin from "../main";
 import { createMascot, setMascotState, type MascotState } from "./mascot";
@@ -74,6 +75,8 @@ export class MemantoView extends ItemView {
 	async onOpen(): Promise<void> {
 		this.build();
 		this.onServerStatusChanged();
+		// Follow agent switches made elsewhere (CLI, widget, another editor).
+		this.registerInterval(window.setInterval(() => this.followActiveAgent(), 2000));
 	}
 
 	async onClose(): Promise<void> {
@@ -113,10 +116,25 @@ export class MemantoView extends ItemView {
 		this.agentSelect = agentRow.createEl("select", { cls: "dropdown memanto-agent" });
 		this.agentSelect.id = "memanto-agent-select";
 		this.agentSelect.addEventListener("change", () => {
-			this.plugin.settings.agentId = this.agentSelect.value;
-			void this.plugin.saveSettings();
-			if (this.messageCount > 0) this.addDivider(`Now asking ${this.agentSelect.value}`);
+			// Same as `memanto agent activate`: the CLI, coding tools and the
+			// widget switch to this agent too.
+			const agentId = this.agentSelect.value;
+			this.plugin.client
+				.activateAgent(agentId)
+				.then(() => {
+					if (this.messageCount > 0) this.addDivider(`Now asking ${agentId}`);
+				})
+				.catch((error: unknown) => new Notice(`Memanto: ${describe(error)}`));
 		});
+	}
+
+	/** Select the agent active on this computer when it changes elsewhere. */
+	private followActiveAgent(): void {
+		const active = readActiveAgentId();
+		if (!active || active === this.agentSelect.value) return;
+		if (!this.agents.some((agent) => agent.agent_id === active)) return;
+		this.agentSelect.value = active;
+		if (this.messageCount > 0) this.addDivider(`Now asking ${active}`);
 	}
 
 	private buildComposer(composer: HTMLElement): void {
@@ -329,8 +347,11 @@ export class MemantoView extends ItemView {
 			return;
 		}
 
+		// With auto-activate on, asking the server resumes the last active agent.
 		const preferred =
-			this.plugin.settings.agentId || environment?.activeAgentId || this.agents[0].agent_id;
+			readActiveAgentId() ??
+			(await this.plugin.client.activeAgentId().catch(() => null)) ??
+			this.agents[0].agent_id;
 		const exists = this.agents.some((agent) => agent.agent_id === preferred);
 
 		for (const agent of this.agents) {
@@ -341,11 +362,6 @@ export class MemantoView extends ItemView {
 					: agent.agent_id;
 			const option = this.agentSelect.createEl("option", { text: label, value: agent.agent_id });
 			option.selected = agent.agent_id === (exists ? preferred : this.agents[0].agent_id);
-		}
-
-		if (this.plugin.settings.agentId !== this.agentSelect.value) {
-			this.plugin.settings.agentId = this.agentSelect.value;
-			await this.plugin.saveSettings();
 		}
 	}
 

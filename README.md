@@ -23,7 +23,7 @@ SORT file.name
 
 If you edit a synced note, later syncs leave it alone and list the files they skipped.
 
-**Chat in the sidebar.** Pick an agent, then choose a mode:
+**Chat in the sidebar.** Pick an agent (it becomes the active agent for the CLI and your other tools too), then choose a mode:
 
 - **Recall** lists matching memories with their type, confidence, provenance and date.
   You can also view the most recent memories, memories as of a date, or what changed
@@ -46,7 +46,9 @@ the commands for anything missing, each with a copy button. Open them any time w
 **Memanto: Setup steps** in the command palette.
 
 If Memanto is already set up, there's nothing to configure. The plugin reads your API key
-from `~/.memanto/.env` and your active agent from `~/.memanto/config.yaml`.
+from `~/.memanto/.env` and uses the agent active on this computer, the same one the CLI,
+coding tools and the desktop widget use. Run `memanto agent auto-activate on` to have your
+last agent resume by itself.
 
 To start from scratch, run two commands. The plugin starts the server for you.
 

@@ -126,6 +126,28 @@ export class MemantoClient {
 		return response.json as AgentList;
 	}
 
+	/**
+	 * The agent active on this computer, per the server. With auto-activate on,
+	 * the server resumes the last active agent when none is active.
+	 */
+	async activeAgentId(): Promise<string | null> {
+		try {
+			const response = await this.request("GET", "/api/v2/status", {
+				headers: this.managementHeaders(),
+			});
+			const status = (await response.json()) as { agent_id?: unknown };
+			return typeof status.agent_id === "string" ? status.agent_id : null;
+		} catch (error) {
+			if (error instanceof MemantoApiError && error.status === 404) return null;
+			throw error;
+		}
+	}
+
+	/** Activate `agentId` as the active agent for every tool on this computer. */
+	async activateAgent(agentId: string): Promise<void> {
+		await this.activate(agentId);
+	}
+
 	private async activate(agentId: string): Promise<string> {
 		const response = await this.request(
 			"POST",
