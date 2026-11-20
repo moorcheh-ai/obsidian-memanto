@@ -4,6 +4,7 @@ import { MemantoClient } from "./api/client";
 import {
 	detect,
 	needsSetup,
+	readActiveAgentId,
 	readSessionToken,
 	resolveBaseUrl,
 	type Environment,
@@ -92,7 +93,7 @@ export default class MemantoPlugin extends Plugin {
 	private async start(): Promise<void> {
 		const environment = await this.refreshEnvironment();
 
-		if (needsSetup(environment) && !this.settings.agentId) {
+		if (needsSetup(environment) && !readActiveAgentId()) {
 			// First run on a machine without Memanto: show the steps once, rather
 			// than leaving an empty pane with no explanation.
 			this.openSetup();
@@ -197,7 +198,7 @@ export default class MemantoPlugin extends Plugin {
 
 	async syncToVault(options: { quiet?: boolean } = {}): Promise<void> {
 		const environment = this.environment ?? (await this.refreshEnvironment());
-		const agentId = this.settings.agentId || environment.activeAgentId;
+		const agentId = readActiveAgentId() ?? environment.activeAgentId;
 
 		if (!agentId) {
 			new Notice("Memanto: choose an agent in the chat pane first.");

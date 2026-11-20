@@ -1,13 +1,12 @@
 import { PluginSettingTab, Setting, type App } from "obsidian";
 import type MemantoPlugin from "./main";
 import type { ServerMode } from "./server/lifecycle";
+import { readActiveAgentId } from "./env/detect";
 import { command } from "./ui/setup-modal";
 
 export interface MemantoSettings {
 	/** Vault folder the OKF bundle is synced into. */
 	syncFolder: string;
-	/** Agent whose estate this vault mirrors. */
-	agentId: string;
 	/** Overrides the address read from `~/.memanto/config.yaml` when set. */
 	baseUrlOverride: string;
 	serverMode: ServerMode;
@@ -24,7 +23,6 @@ export interface MemantoSettings {
 
 export const DEFAULT_SETTINGS: MemantoSettings = {
 	syncFolder: "Memanto",
-	agentId: "",
 	baseUrlOverride: "",
 	serverMode: "dedicated",
 	recallLimit: 10,
@@ -185,7 +183,7 @@ export class MemantoSettingTab extends PluginSettingTab {
 						? "Not needed (on-prem)"
 						: "Not found",
 			],
-			["Agent", this.plugin.settings.agentId || environment?.activeAgentId || "None selected"],
+			["Agent", readActiveAgentId() || "None active"],
 		];
 
 		for (const [label, value] of rows) {
