@@ -132,8 +132,14 @@ export class SetupModal extends Modal {
 						text: "Memanto runs against a free cloud service or entirely on your own machine. Pick one — you can switch later.",
 					});
 
+					const hosted = container.createDiv({ cls: "memanto-option" });
+					hosted.createEl("h4", { text: "Memanto Cloud" });
+					hosted.createEl("p", {
+						text: "Hosted Memanto: run memanto login and approve this computer in your browser. Your memories are shared with your other computers and tools.",
+					});
+
 					const cloud = container.createDiv({ cls: "memanto-option" });
-					cloud.createEl("h4", { text: "Cloud" });
+					cloud.createEl("h4", { text: "Moorcheh Cloud" });
 					cloud.createEl("p", {
 						text: "A free API key, 100,000 operations, no card. Your memories are stored by Moorcheh.",
 					});

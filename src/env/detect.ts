@@ -14,14 +14,14 @@ export interface Environment {
 	/** A server answered `/health` at `baseUrl`. */
 	serverUp: boolean;
 	baseUrl: string;
-	/** A Moorcheh API key was found in `~/.memanto/.env`. */
+	/** The backend's key was found: `MEMANTO_API_KEY` on Memanto Cloud, else `MOORCHEH_API_KEY`. */
 	hasApiKey: boolean;
 	apiKey: string | null;
 	/** `~/.memanto/config.yaml` exists and parsed. */
 	hasConfig: boolean;
 	/** Agent active on this computer when detection ran (see `readActiveAgentId`). */
 	activeAgentId: string | null;
-	/** `cloud` or `on-prem`, when the config says. */
+	/** `memanto-cloud`, `cloud` (Moorcheh Cloud) or `on-prem`, when the config says. */
 	backend: string | null;
 	/** Absolute path to the `memanto` executable, when one is on PATH. */
 	binaryPath: string | null;
@@ -50,8 +50,10 @@ export function defaultExportDir(agentId: string): string {
  * A local server also grants management access to loopback callers with no key
  * at all, so a null here is not necessarily a problem.
  */
-export function readApiKey(): string | null {
-	const fromEnvironment = process.env.MOORCHEH_API_KEY?.trim();
+export function readApiKey(backend: string | null = readConfig().backend): string | null {
+	// On Memanto Cloud the server's credential is the `mk_` key from `memanto login`.
+	const name = backend === "memanto-cloud" ? "MEMANTO_API_KEY" : "MOORCHEH_API_KEY";
+	const fromEnvironment = process.env[name]?.trim();
 	if (fromEnvironment) return fromEnvironment;
 
 	const path = join(memantoHome(), ".env");
@@ -70,7 +72,7 @@ export function readApiKey(): string | null {
 
 		const separator = trimmed.indexOf("=");
 		if (separator === -1) continue;
-		if (trimmed.slice(0, separator).trim() !== "MOORCHEH_API_KEY") continue;
+		if (trimmed.slice(0, separator).trim() !== name) continue;
 
 		const value = trimmed
 			.slice(separator + 1)
@@ -264,7 +266,7 @@ export async function detect(
 ): Promise<Environment> {
 	const config = readConfig();
 	const baseUrl = resolveBaseUrl(baseUrlOverride);
-	const apiKey = readApiKey();
+	const apiKey = readApiKey(config.backend);
 
 	return {
 		serverUp: await probe(baseUrl),
